@@ -41,11 +41,14 @@ const verifyPassword = async (password, userSalt, userPassword) => {
     const hashedPassword = key.toString("base64");
 
     // 사용자의 비밀번호를 암호화한 값과 db에 저장된 비밀번호를 비교한다.
-    if (hashedPassword === userPassword) {
-        return true
+    if (hashedPassword == userPassword) {
+        console.log("success")
+        return "success"
     }
 
-    return false;
+    console.log("fail: hashedPassword => " + hashedPassword)
+    console.log("fail: userPassword => " + userPassword)
+    return "fail";
 };
 
 module.exports = { createHashedPassword, verifyPassword};

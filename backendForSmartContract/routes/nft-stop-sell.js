@@ -7,5 +7,5 @@ router.post('/',async function(req,res) {
     var nft_stop_sell = require("../nft-market/nft-stop-sell");
     var resolve = await nft_stop_sell.main(req);
     console.log(resolve.data);
-    res.send();
+    res.send("success");
 })

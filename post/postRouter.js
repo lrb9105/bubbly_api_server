@@ -7,8 +7,10 @@ const router = express.Router();
 const BUCKET_NAME = 'bubbly-s3';
 // aws-sdk를 사용하기 위해 가져 옴
 const AWS = require('aws-sdk');
+// 설정파일
+const config = require('../config/config');
 // s3에 접근하기 위해 accessKeyId와 secretAccessKey값을 넣어주고 s3객체를 생성한다.
-const s3 = new AWS.S3({accessKeyId: 'AKIAT2UD4WFJ4B6IC4EQ', secretAccessKey: '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'});
+const s3 = new AWS.S3({accessKeyId: config.s3_accessKeyId, secretAccessKey: config.s3_secretAccessKey});
 // mariaDB를 연결하기 위해 모듈 가져옴
 const maria = require('../db/maria');
 const time = require('../util/time');
@@ -20,6 +22,28 @@ module.exports = router;
 const HashMap  = require ('hashmap') ;
 // hashmap은 여러 함수에서 사용할 것이므로 인스턴스 변수로 생성
 let hashmap;
+
+const tokenPayment = require('../backendForSmartContract/routes/token-payment');
+
+
+// 파이썬 프로그램과 http통신을 하기 위해
+const axios = require("axios");
+
+router.get('/ipfs', async function(req,res) {
+    let abd;
+    await axios.get("https://ipfs.io/ipfs/bafyreidclco3yqjlzof2sqq5peqxrr7xbdexyfwkluy7psat7onjoyhdhy/metadata.json")
+        .then((response) =>{
+            let imageUrl = response.data["image"];
+            abd = imageUrl.replace("ipfs://","https://ipfs.io/ipfs/");
+            console.log(imageUrl);
+        })
+        .catch((err) => {
+            console.log("Error!!",err);
+        });
+
+    res.send(abd);
+
+});
 
 /* 
     역할: 게시물 정보를 저장한다.
@@ -474,7 +498,7 @@ router.post('/deletePost', async function(req,res) {
                 s3delete(file_save_names);
             }
             // 데이터베이스의 댓글 정보를 삭제한다.
-            let sqlDeleteComment = 'DELETE FROM comment WHERE post_id = ' + hashmap.get("post_id");
+            let sqlDeleteComment = 'DELETE FROM comment WHERE post_id = ' + hashmap.get("post_id");cre_datetime_user_info
             maria.query(sqlDeleteComment, function (err, result) {
                 if (err) {
                     console.log(sqlDeleteComment);
@@ -504,7 +528,7 @@ router.post('/deletePost', async function(req,res) {
 })
 
 // 특정 게시물에 좋아요를 누른 경우 로우 생성!
-router.post('/like', async function(req,res) {
+router.post('/like', async function(req,res, next) {
     // post_id, user_id 가져 와서 hashMap에 넣음
     await parseFormData(req);
 
@@ -516,13 +540,28 @@ router.post('/like', async function(req,res) {
     await maria.query(queryStr, [datas], function(err, rows, fields){
         if(!err){
             console.log("성공");
-            res.send("success");
+            // 좋아요 카운트 테이블에 + 1
+            let queryStr = 'select post_like_count(?, 1)';
+            let datas = [hashmap.get("post_id")];
+
+            // 저장!
+            maria.query(queryStr, [datas], function(err, rows, fields){
+                if(!err){
+                    console.log("성공");
+                    res.locals.postId = hashmap.get("post_id");
+                    next();
+                } else {
+                    console.log(err);
+                    res.send(err);
+                }
+            });
         } else {
             console.log(err);
-            res.send("fail");
+            res.send(err);
         }
     });
-});
+}, tokenPayment);
+
 
 // 좋아요 취소!
 router.post('/dislike', async function(req,res) {
@@ -540,7 +579,21 @@ router.post('/dislike', async function(req,res) {
         } else {
             console.log(sqlDelete);
             console.log(result);
-            res.send("success");
+
+            // 좋아요 카운트 테이블에 - 1
+            let queryStr = 'select post_like_count(?, -1)';
+            let datas = [hashmap.get("post_id")];
+
+            // 저장!
+            maria.query(queryStr, [datas], function(err, rows, fields){
+                if(!err){
+                    console.log("성공");
+                    res.send("success");
+                } else {
+                    console.log(err);
+                    res.send(err);
+                }
+            });
         }
     });
 });

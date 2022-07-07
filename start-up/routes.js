@@ -11,6 +11,10 @@ const postRouter = require("../post/postRouter");
 const commentRouter = require("../comment/commentRouter");
 const followingRouter = require("../following/followingRouter");
 const utilRouter = require("../util/utilRouter");
+const loginRouter = require("../login/loginRouter");
+const nftRouter = require("../nft/nftRouter");
+// jwt토큰 검증
+const jwtToken = require('../util/jwtToken');
 
 module.exports = function(app) {
   // 경로를 지정하지 않았으므로 모든 요청마다 적용되는 함수이다.!!!!!!!
@@ -25,10 +29,14 @@ module.exports = function(app) {
   app.use("/token-payment", tokenPaymentRouter);
   app.use("/userinfo", userInfoRouter);
   app.use("/community", communityRouter);
+  // 토큰 적용 - 테스트 시 편의를 위해 토큰 적용 안함!
+  //app.use("/post", jwtToken, postRouter);
   app.use("/post", postRouter);
   app.use("/comment", commentRouter);
   app.use("/following", followingRouter);
   app.use("/util", utilRouter);
+  app.use("/login", loginRouter);
+  app.use("/nft", nftRouter);
   app.use("/static",express.static('nft-storage'));
   app.use("/config",express.static('backendForSmartContract/config'));
 };

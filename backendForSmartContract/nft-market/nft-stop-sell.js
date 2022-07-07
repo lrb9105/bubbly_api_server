@@ -1,6 +1,10 @@
 const algosdk = require('algosdk');
 var busboy = require('connect-busboy');
 const axios = require("axios");
+// 생성시간 저장 위해 사용
+const time = require('../../util/time');
+// mariaDB를 연결하기 위해 모듈 가져옴
+const maria = require('../../db/maria');
 var config = require('../config/get-config-parameter')
 var arr = [];
 let mnemonic, nftID, appID, sellPrice;
@@ -25,6 +29,21 @@ function main(req) {
     var txn_result = await requestStopSellNFT(devAddress, devMnemonic, nftOwnerAddress, nftID, appID, sellPrice, tokenID, nodeToken, ipAddress, port);
     result = txn_result;
     console.log(result);
+
+    // nft판매 테이블에서 삭제
+    let queryStr = "delete from nft_sell where app_id = ?";
+    let datas = [appID];
+    
+    await maria.query(queryStr, datas, function(err, rows, fields){
+        if(!err){
+            console.log("성공");
+        } else {
+            console.log("실패");
+            console.log(err);
+            res.send("fail");
+        }
+    });
+
      return resolve(result);
   })
 }
@@ -60,7 +79,8 @@ function requestStopSellNFT(devAddress, devMnemonic, nftOwnerAddress, nftID, app
         sell_price: sellPrice,
         token_id: tokenID,
         token: nodeToken,
-        ip_address: ipAddress+':'+port
+        //ip_address: ipAddress+':'+port
+        ip_address: ipAddress
     }})  
     .then(function (response) {
         return response;

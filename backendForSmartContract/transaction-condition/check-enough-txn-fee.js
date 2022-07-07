@@ -5,6 +5,9 @@ function checkBalance(address){
         var result;
         var algodClient = await algod.getConnection();
         let accountInfo = await algodClient.accountInformation(address).do();
+        
+        console.log(accountInfo);
+
         console.log("Account balance: %d microAlgos", accountInfo.amount);
         if(accountInfo.amount>1000){
             result = true;

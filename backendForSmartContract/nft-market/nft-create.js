@@ -10,6 +10,10 @@ const FormData = require("form-data");
 const axios = require("axios");
 // 폴더경로 + 파일명을 합치기위해
 const path = require('path');
+// 생성시간 저장 위해 사용
+const time = require('../../util/time');
+// mariaDB를 연결하기 위해 모듈 가져옴
+const maria = require('../../db/maria');
 // 스마트컨트랙트 실행에 필요한 json파일을 로드하기 위해
 var config = require('../config/get-config-parameter')
 // 충분한 알고양을 가지고 있는지 판단하기 위해
@@ -21,7 +25,7 @@ let metadata_url, imageName, description, assetName, mnemonic;
 // 임시파일명. 클라이언트에서 파일을 받아 nft-market img에 이 임시파일명으로 저장 후, 이 파일명으로 다시 읽어서 ipfs에 업로드 
 let filetempname; 
 
-function main(req) {
+function main(req, res) {
   return new Promise(async(resolve)=>{
     //클라이언트에서 수신한 파라미터를 배열에 저장 및 수신한 이미지 임시파일 저장.
     await parseMultiParts(req); 
@@ -31,9 +35,11 @@ function main(req) {
     //자산명 -> flask nft생성 요청시 사용
     assetName = arr[1]; 
     //이미지명 -> ipfs이미지 메타데이터 저장시 사용
-    imageName = arr[2]; 
+    imageName = assetName; 
     //디스크립션-> ipfs이미지 메타데이터 저장시 사용
-    description = arr[3]; 
+    description = arr[2]; 
+    user_id = arr[3]; 
+    post_id = arr[4]; 
 
     //nft실소유자 계정정보 가져오기
     var account = await getAccount(mnemonic);
@@ -57,9 +63,8 @@ function main(req) {
         });
 
         //ipfs저장후 반환된 res를 파싱하여 metadata json경로로 할당
-        // db에 저장하는 데이터가 이건가?
         metadata_url = res.value.url;
-        console.log(metadata_url);
+        console.log("metadata_url: " + metadata_url);
         
         arr.push(metadata_url); //배열에 nft생성관련 정보 담기 위해 메타데이터 url도 배열에 추가
         //smart contract app(flask) 전송 정보 리스트업
@@ -91,7 +96,53 @@ function main(req) {
         var txn_result = await requestCreateNFT(devAddress, devMnemonic, nftOwnerAddress, nftOwnerMnemonic, unitName, assetName, nftURL, nodeToken, ipAddress, port);
         result = txn_result;
         
-        console.log(result);
+        const nft_id = result.data["nft_id"];
+
+        // 이미지 저장경로를 가져온다.
+        let metadataUrl = await metadata_url.replace("ipfs://","https://ipfs.io/ipfs/");
+        let fileSaveUrl;
+
+        await axios.get(metadataUrl)
+        .then((response) =>{
+            let imageUrl = response.data["image"];
+            fileSaveUrl = imageUrl.replace("ipfs://","https://ipfs.io/ipfs/");
+            console.log(fileSaveUrl);
+        })
+        .catch((err) => {
+            console.log("Error!!",err);
+        });
+        
+
+        // db에 저장
+        // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
+        let queryStr = 'insert into nft (nft_id, holder_id, nft_name, nft_desc, cre_datetime_nft, file_save_url) values (?)';
+        let datas = [nft_id, user_id, assetName, description, time.timeToKr(), fileSaveUrl];
+        
+        // 저장!
+        await maria.query(queryStr, [datas], async function(err, rows, fields){
+            if(!err){
+                console.log("성공");
+
+                // 해당 nft가 포함된 게시물 nft_yn "y"로 업데이트 
+                let queryStr = "update post set nft_post_yn = 'y', nft_id = ? where post_id = ?";
+                let datas = [nft_id, post_id];
+                
+                await maria.query(queryStr, datas, function(err, rows, fields){
+                    if(!err){
+                        console.log("성공");
+                    } else {
+                        console.log("실패");
+                        console.log(err);
+                        res.send("fail");
+                    }
+                });
+            } else {
+                console.log("실패");
+                console.log(err);
+                res.send("fail");
+            }
+        });
+
       return resolve(result);
       });
     }else{
@@ -182,7 +233,8 @@ function requestCreateNFT(devAddress, devMnemonic, nftOwnerAddress, nftOwnerMnem
             asset_name: assetName,
             nft_url: nftURL,
             token: nodeToken,
-            ip_address: ipAddress+':'+port
+            //ip_address: ipAddress+':'+port - 로컬노드로 변경 시 이렇게 사용하기
+            ip_address: ipAddress
         }})  
         .then(function (response) {
           return response;

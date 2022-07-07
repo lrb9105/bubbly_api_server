@@ -1,6 +1,10 @@
 const algosdk = require('algosdk');
 var busboy = require('connect-busboy');
 const axios = require("axios");
+// 생성시간 저장 위해 사용
+const time = require('../../util/time');
+// mariaDB를 연결하기 위해 모듈 가져옴
+const maria = require('../../db/maria');
 var config = require('../config/get-config-parameter')
 var txn_condition = require('../transaction-condition/check-enough-txn-fee')
 var arr = [];
@@ -15,7 +19,12 @@ function main(req) {
     nftID = arr[2];
     appID = arr[3];
     buyPrice = arr[4];
+    buyerId = arr[5]
     var buyer_account = await getAccount(buyer_mnemonic);
+    
+    console.log("buyer_mnemonic: " + buyer_mnemonic);
+    console.log("buyer_account.addr: " + buyer_account.addr);
+
     var isBalanceMoreThanMin = await txn_condition.checkBalance(buyer_account.addr); //구매자의 토큰이 1000d이상이닞 확인. txn최소 잔고
     //그러나 옵트인하기 위한 트랜잭션 최소 작액 재검토 및 다른 기능으로 인해 최소잔액 기준 변경 시 txn_condition코드에서 최소잔액 수정 필요.
     if(isBalanceMoreThanMin){
@@ -36,7 +45,36 @@ function main(req) {
         //nft 구매 요청
         result = txn_result;
         console.log(result);
-        //트랜잭션 결과를 프로미스에 담아서 반환.
+        
+        // nft 소유자 변경
+        let queryStr = "update nft set holder_id = ?, upd_datetime_holder = ? where nft_id = ?";
+        let datas = [buyerId, time.timeToKr(), nftID];
+        
+        await maria.query(queryStr, datas, async function(err, rows, fields){
+            if(!err){
+                console.log("성공");
+
+                // nft판매 테이블 업데이트
+                // nft 소유자 변경
+                let queryStr = "update nft_sell set buyer_id = ?, cre_datetime_buy = ?, buy_yn = 'y' where app_id = ?";
+                let datas = [buyerId, time.timeToKr(), appID];
+                
+                await maria.query(queryStr, datas, function(err, rows, fields){
+                    if(!err){
+                        console.log("성공");
+                    } else {
+                        console.log("실패");
+                        console.log(err);
+                        res.send("fail");
+                    }
+                });
+            } else {
+                console.log("실패");
+                console.log(err);
+                res.send("fail");
+            }
+        });
+
         return resolve(result);
     }else{
       result = "계정 잔고가 NFT optin하기 위한 최소 nova 금액 미만입니다.";
@@ -80,7 +118,8 @@ function requestBuyNFT(devAddress, devMnemonic, nftOwnerAddress, buyerAddress, b
         app_id : appID,
         token_id: tokenID,
         token: nodeToken,
-        ip_address: ipAddress+':'+port
+        //ip_address: ipAddress+':'+port
+        ip_address: ipAddress
     }})  
     .then(function (response) {
         return response;

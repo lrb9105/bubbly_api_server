@@ -105,3 +105,4 @@ dist
 
 #config
 config/
+backendForSmartContract/config/*.json

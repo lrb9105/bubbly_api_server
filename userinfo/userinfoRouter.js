@@ -7,8 +7,6 @@ const router = express.Router();
 const BUCKET_NAME = 'bubbly-s3';
 // aws-sdk를 사용하기 위해 가져 옴
 const AWS = require('aws-sdk');
-// s3에 접근하기 위해 accessKeyId와 secretAccessKey값을 넣어주고 s3객체를 생성한다.
-const s3 = new AWS.S3({accessKeyId: 'AKIAT2UD4WFJ4B6IC4EQ', secretAccessKey: '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'});
 // mariaDB를 연결하기 위해 모듈 가져옴
 const maria = require('../db/maria');
 const time = require('../util/time');
@@ -22,9 +20,15 @@ const redis = require('redis');
 const CryptoJS = require('crypto-js')
 //request
 const request = require('request');
+// 알고랜드 sdk를 사용하기 위해
+const algosdk = require('algosdk');
+const axios = require("axios");
 // 설정파일
 const config = require('../config/config');
-
+// s3에 접근하기 위해 accessKeyId와 secretAccessKey값을 넣어주고 s3객체를 생성한다.
+const s3 = new AWS.S3({accessKeyId: config.s3_accessKeyId, secretAccessKey: config.s3_secretAccessKey});
+// 암호화된 비밀번호를 생성하기 위해
+const blockchain = require('../util/blockchain');
 
 // 외부에서 사용하기 위해 router를 넣어줌!
 module.exports = router;
@@ -35,6 +39,54 @@ const client = redis.createClient(6379,'127.0.0.1');
 
 // hashmap은 여러 함수에서 사용할 것이므로 인스턴스 변수로 생성
 let hashmap;
+
+// 파이썬과 통신 테스트
+router.get('/testPython', function(req,res){        
+    return axios.post('http://127.0.0.1:5000/test',null,{params: {
+            dev_address: "aaaa"
+        }})  
+        .then(function (response) {
+            res.send(response);
+            return response;
+        })
+        .catch(function (error) {
+            res.send(err);
+            return error;
+        });
+});
+
+// 블록체인 계정 , 니모닉 생성 테스트
+router.get('/addrMake',async function(req,res){
+    const data = await blockchain.makeBlockchainAddrAndMnemonic();
+
+    const account = data.account;
+    const mnemonic = data.mnemonic;
+
+    console.log(account);
+    console.log(mnemonic);
+    
+    res.send(account.addr + "; " + mnemonic);
+});
+
+// 개발사 계정 -> 회원가입한 계정으로 algo 보내기
+router.get('/sendAlgoToAddr',async function(req,res){   
+    const result = await blockchain.sendToAddrByDevAddr("UUGH64MTEPEDYX7RQ7Z7L3XXD4JGB7DY5DP655GO4DP5VL6VRRO4DNSOZY");
+
+    res.send(result);
+});
+
+// bubble 받기
+router.get('/transferToken',async function(req,res){   
+    const receiver_mnemonic = req.param("receiver_mnemonic");
+    const result = await blockchain.transferToken("above luxury grocery barely obtain recipe record need card invest gold exclude market huge frozen wheat nation deal same option burst slam section about stone", receiver_mnemonic, 94434081);
+    res.send(result);
+});
+
+// 블록체인 계정 토큰에 옵트인
+router.get('/optin',async function(req,res){
+    const result = await blockchain.tokenOptIn("ginger primary envelope apart vivid lottery secret assume major canoe once manage hundred fragile blue point clutch unable once bitter destroy glue artist above ivory",94434081)   
+    res.send(result);
+});
 
 // 휴대폰으로 인증번호 전송
 router.post('/sendPhoneCertificationNum',async function(req,res){
@@ -126,7 +178,85 @@ router.post('/createUserInfo', async function(req,res) {
             res.send("fail");
         }
     });
+});
+
+
+/* 
+    역할: 사용자 블록체인 계정을 생성하고 옵트인한다.
+    input: user_id
+    output: 니모닉
+*/
+router.post('/createAddrToBlockchain', async function(req,res) {
+    // 파라미터 정보를 파싱해서 해시맵에 저장한다
+    await parseFormData(req);
+
+    // 사용자 아이디
+    const user_id = hashmap.get("user_id");
+
+    // 사용자 계정과 니모닉을 저장하는 변수
+    let accountAndMnemonic;
+
+    // 1. 새로운 블록체인 계정과 니모닉 생성    
+    blockchain.makeBlockchainAddrAndMnemonic()
+    .then((value) => {
+        // 2. 개발사 계정이 생성된 계정에게 algo 전송(opt-in을 위한 최소 알고)
+        accountAndMnemonic = value;
+        blockchain.sendToAddrByDevAddr(accountAndMnemonic.account.addr)
+    }).catch((error) => {console.log(error)})
+    .then(() => {
+        // 3. 생성된 계정 bubble 토큰에 옵트인
+        blockchain.tokenOptIn(accountAndMnemonic.mnemonic,94434081)
+    }).catch((error) => {console.log(error)})
+    .then(() => {
+        // 4. 데이터베이스에 블록체인 계정 정보를 저장한다.
+        let queryStr = 'update user_info set novaland_account_addr = ? where user_id = ?';
+        let datas = [accountAndMnemonic.account.addr, user_id];
+        
+        maria.query(queryStr, datas, function(err, rows, fields){
+            if(!err){
+                console.log("성공");
+                res.send(accountAndMnemonic.mnemonic);
+            } else {
+                console.log(err);
+                console.log("실패");
+                res.send("fail");
+            }
+        });
+    }).catch((error) => {console.log(error)})
 })
+
+// user_id로 계정정보 조회
+router.get('/selectAddrUsingUserId',async function(req,res){  
+    const user_id = req.param("user_id");
+    
+    const queryStr = 'select novaland_account_addr from user_info where user_id = ?';
+    let datas = [user_id];
+        
+    maria.query(queryStr, datas, async function(err, rows, fields){
+            if(!err){
+                console.log("성공");
+                
+                const addr = rows[0].novaland_account_addr;
+
+                // 사용자 블록체인 정보 조회
+                const account_info = await blockchain.selectAccountInfo(addr);
+
+                res.send(account_info);
+            } else {
+                console.log(err);
+                console.log("실패");
+                res.send("fail");
+            }
+        });
+});
+
+// 계정주소로 계정정보 조회
+router.get('/selectAddrUsingAddr',async function(req,res){  
+    // 사용자 블록체인 정보 조회
+    const account_info = await blockchain.selectAccountInfo(req.param("addr"));
+
+    res.send(account_info);
+});
 
 // 사용자 정보를 조회한다.
 router.get('/selectUserInfo', async function(req,res) {
@@ -137,6 +267,7 @@ router.get('/selectUserInfo', async function(req,res) {
             + "     , phone_num "
             + "     , novaland_account_addr "
             + "     , profile_file_name "
+            + "     , novaland_account_addr"
             + "from user_info "
             + "where user_id = " +  req.param("user_id");
 
