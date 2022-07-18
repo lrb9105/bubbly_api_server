@@ -19,7 +19,7 @@ let hashmap;
 // 멘션된 사용자 user_id를 저장하는 리스트
 let arr;
 
-/*
+/* 
     역할: 댓글 정보를 저장한다.
     input: req, res
     output: 없음
@@ -35,11 +35,11 @@ router.post('/createComment', async function(req,res) {
         mentionedUserIdStr = null;
     }
     console.log("mentionedUserIdStr: " + mentionedUserIdStr);
-
+    
     // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
     let queryStr = 'insert into comment (post_id, comment_writer_id, comment_depth, comment_contents, cre_datetime_comment, mentioned_user_list) values (?)';
     let datas = [hashmap.get("post_id"), hashmap.get("comment_writer_id"), hashmap.get("comment_depth"), hashmap.get("comment_contents"), time.timeToKr(), mentionedUserIdStr];
-
+    
     // 저장!
     await maria.query(queryStr, [datas], function(err, rows, fields){
         if(!err){
@@ -123,9 +123,9 @@ router.post('/updateComment', async function(req,res) {
         mentionedUserIdStr = null;
     }
     console.log("mentionedUserIdStr: " + mentionedUserIdStr);
-
+    
     let sqlUpdate = 'update comment SET comment_contents = ?, upd_datetime_comment = ?, mentioned_user_list = ? WHERE comment_id = ?';
-
+            
     let datas = [hashmap.get("comment_contents"), time.timeToKr(), mentionedUserIdStr, hashmap.get("comment_id")];
 
     maria.query(sqlUpdate, datas, function (err, result) {
@@ -136,7 +136,7 @@ router.post('/updateComment', async function(req,res) {
         } else {
             console.log(sqlUpdate);
             console.log(result);
-            // 성공한 경우
+            // 성공한 경우 
             res.send("success");
         }
     })
@@ -187,7 +187,7 @@ function parseFormData(req){
         });
 
         req.busboy.on("finish", function() {
-            return resolve();
+            return resolve();            
         });
     })
   }
@@ -199,11 +199,11 @@ function parseFormData(req){
 
         if(mentionedUserIdlist != null){
             let arr = mentionedUserIdlist.split(",");
-
+        
             for(let j = 0; j < arr.length; j++ ){
                 arr[j] = Number(arr[j]);
             }
-
+    
             result[i].mentioned_user_list = arr;
         }
 

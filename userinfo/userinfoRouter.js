@@ -267,7 +267,6 @@ router.get('/selectUserInfo', async function(req,res) {
             + "     , phone_num "
             + "     , novaland_account_addr "
             + "     , profile_file_name "
-            + "     , novaland_account_addr"
             + "from user_info "
             + "where user_id = " +  req.param("user_id");
 
@@ -290,7 +289,7 @@ router.get('/selectIsExisingId', async function(req,res) {
     // 쿼리문
     let sql = "select case when login_id is null then 'not exist' else 'exist' end is_exist "
             + "from user_info "
-            + "where login_id = " +  req.param("login_id");
+            + "where login_id = '" +  req.param("login_id") + "'";
 
     console.log(sql);
 
@@ -369,6 +368,34 @@ router.post('/updateUserInfo', async function(req,res) {
             })
         }
     });
+})
+
+// 로그인 아이디를 변경한다.
+router.post('/changeLoginId', async function(req,res) {
+    await parseFormData(req);
+    
+    const userId = hashmap.get("user_id");
+    const changeingLoginId = hashmap.get("changing_login_id");
+
+    let sqlUpdate = "update user_info "
+                  + "set   login_id = ? "
+                  + "    , upd_datetime_user_info = ? "
+                  + "where user_id = ? "
+
+    let datas = [changeingLoginId, time.timeToKr(), userId];
+
+    maria.query(sqlUpdate, datas, function (err, result) {
+        if (err) {
+            console.log(err);
+            res.send("fail");
+            throw err;
+        } else {
+            console.log(sqlUpdate);
+            console.log(result);
+            // 성공한 경우 
+            res.send("success");
+        }
+    })
 })
 
 /* 사용자 정보를 삭제한다.*/

@@ -14,6 +14,8 @@ const s3 = new AWS.S3({accessKeyId: config.s3_accessKeyId, secretAccessKey: conf
 // mariaDB를 연결하기 위해 모듈 가져옴
 const maria = require('../db/maria');
 const time = require('../util/time');
+const hashtag = require('../hashtag/hashtag');
+const mention = require('../post/mention');
 
 // 외부에서 사용하기 위해 router를 넣어줌!
 module.exports = router;
@@ -22,6 +24,8 @@ module.exports = router;
 const HashMap  = require ('hashmap') ;
 // hashmap은 여러 함수에서 사용할 것이므로 인스턴스 변수로 생성
 let hashmap;
+// 멘션된 사용자 아디이리스트르 받을 배열 객체
+let arr;
 
 const tokenPayment = require('../backendForSmartContract/routes/token-payment');
 
@@ -50,32 +54,59 @@ router.get('/ipfs', async function(req,res) {
     input: req, res
     output: 없음
 */
-router.post('/createPost', async function(req,res) {
+router.post('/createPost', async function(req, res, next) {
     // 파라미터 정보를 파싱해서 해시맵에 저장하고 파일을 s3에 저장한다.
     // 여러개 저장할 경우 ','로 구분해서 이름을 가져온다!
     let saveFileNames = await parseMultiParts(req);
+
+    // 멘션(@사용자명 -> 사용자 아이디) 파싱
+    let mentionedUserIdStr = await mention(arr);
+
+    if(mentionedUserIdStr == "") {
+        mentionedUserIdStr = null;
+    }
+    console.log("mentionedUserIdStr: " + mentionedUserIdStr);
 
     // 저장한 파일명
     console.log(saveFileNames);
     
     // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-    let queryStr = 'INSERT INTO post (post_writer_id, post_contents, file_save_names, cre_datetime_post, share_post_yn, community_id) VALUES (?)';
-    let datas = [hashmap.get("post_writer_id"), hashmap.get("post_contents"), saveFileNames, time.timeToKr(), hashmap.get("share_post_yn"), hashmap.get("community_id")];
+    let queryStr = 'INSERT INTO post (post_writer_id, post_contents, file_save_names, cre_datetime_post, share_post_yn, community_id, mentioned_user_list) VALUES (?)';
+    let datas = [hashmap.get("post_writer_id"), hashmap.get("post_contents"), saveFileNames, time.timeToKr(), hashmap.get("share_post_yn"), hashmap.get("community_id"), mentionedUserIdStr];
     
     console.log("현재시간: " + time.timeToKr());
 
     // 저장!
-    await maria.query(queryStr, [datas], function(err, rows, fields){
-        if(!err){
+    await maria.query(queryStr, [datas], async function(err, rows, fields){
+        if(!err) {
             console.log("성공");
-            res.send("success");
-        } else {
+            // post_id를 가져온다.
+            // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
+            let queryStr = 'select max(post_id) post_id from post where post_writer_id = ?';
+            let datas = [hashmap.get("post_writer_id")];
+            
+            // 저장!
+            await maria.query(queryStr, [datas], function(err, rows, fields){
+                if(!err){
+                    console.log("성공");
+                    // 해시태그 객체에게 게시물 아이디와 내용을 넘겨준다.
+                    res.locals.postContents = hashmap.get("post_contents");
+                    res.locals.postId = rows[0].post_id;
+                    res.locals.gubun = 0;
+                    next();
+                } else {
+                    console.log(err);
+                    console.log("실패");
+                    res.send("fail");
+                }
+            }); 
+        }else {
             console.log(err);
             console.log("실패");
             res.send("fail");
         }
     });
-})
+}, hashtag);
 
 // 게시물id로 게시물 정보를 조회한다.
 router.get('/selectPostUsingPostId', async function(req,res) {
@@ -92,7 +123,8 @@ router.get('/selectPostUsingPostId', async function(req,res) {
             + "     , nft_post_yn "
             + "     , ui.nick_name "
             + "     , profile_file_name "
-            + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+            + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime "
+            + "     , p.mentioned_user_list "
             + " from post p "
             + " inner join user_info ui on p.post_writer_id = ui.user_id "
             + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id "
@@ -101,14 +133,16 @@ router.get('/selectPostUsingPostId', async function(req,res) {
 
     console.log(sql);
 
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -130,19 +164,23 @@ router.get('/selectPostUsingPostWriterId', async function(req,res) {
                 + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = " + req.param("post_writer_id") +") pl on p.post_id = pl.post_id " 
                 + " where post_writer_id = " + req.param("post_writer_id")
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -164,20 +202,23 @@ router.get('/selectPostUsingPostContents', async function(req,res) {
                     + "     , ui.nick_name "
                     + "     , profile_file_name "
                     + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                    + "     , p.mentioned_user_list "
                     + " from post p "
                     + " inner join user_info ui on p.post_writer_id = ui.user_id "
                     + " left JOIN (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id "
                     + " WHERE post_contents like '%" + req.param("post_contents") + "%'"
                     + " or (p.post_contents like '%" + req.param("post_contents") + "%'" +  " and community_id in (select community_id from participating_community where user_id = "+ req.param("user_id") + "))"
                     + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -198,6 +239,7 @@ router.get('/selectPostMeAndFolloweeAndCommunity', async function(req,res) {
                 + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left JOIN (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id " 
@@ -205,14 +247,16 @@ router.get('/selectPostMeAndFolloweeAndCommunity', async function(req,res) {
                 + " or (post_writer_id in (select followee_id from following where follower_id =" + req.param("user_id") + ") and community_id = 0)"
                 + " or (community_id in (select community_id from participating_community where user_id = "+ req.param("user_id") + "))"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -233,20 +277,23 @@ router.get('/selectSharedPostUsingPostWriterId', async function(req,res) {
                 + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = " + req.param("post_writer_id") +") pl on p.post_id = pl.post_id " 
                 + " where post_writer_id = " + req.param("post_writer_id")
                 + " and p.share_post_yn = 'y'"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -267,19 +314,22 @@ router.get('/selectCommentedPostUsingUserId', async function(req,res) {
                 + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id " 
                 + " inner join (select distinct post_id from comment where comment_writer_id =" +  req.param("user_id") + ") pi on p.post_id = pi.post_id "
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -300,20 +350,23 @@ router.get('/selectNftPostUsingPostWriterId', async function(req,res) {
                 + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = "+ req.param("post_writer_id") +" ) pl on p.post_id = pl.post_id " 
                 + " where post_writer_id = " + req.param("post_writer_id")
                 + " and p.nft_post_yn  = 'y'"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -334,18 +387,21 @@ router.get('/selectLikedPostUsingUserId', async function(req,res) {
                 + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " inner join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -367,19 +423,22 @@ router.get('/selectCommunityPost', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.community_id"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
                 + " where community_id = " + req.param("community_id")
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
@@ -401,29 +460,40 @@ router.get('/selectAllCommunityPost', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.community_id"
+                + "     , p.mentioned_user_list "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
                 + " where community_id in (select community_id from participating_community where user_id = " + req.param("user_id") + ")"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, function (err, result) {
+    await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
             throw err;
         } else {
             console.log(sql);
-            console.log(result);
-            res.send(result);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
         }
     });
 });
 
 // 게시물 정보를 수정한다.
-router.post('/updatePost', async function(req,res) {
+router.post('/updatePost', async function(req,res, next) {
     // 파라미터 정보를 파싱해서 해시맵에 저장하고 파일을 s3에 저장한다.
     // 여러개 저장할 경우 ','로 구분해서 이름을 가져온다!
     // 새로 저장할 파일이 있으면 파일명리스트(,로 구분) 없다면 undefinded
     let saveFileNames = await parseMultiParts(req);
+
+    // 멘션(@사용자명 -> 사용자 아이디) 파싱
+    let mentionedUserIdStr = await mention(arr);
+
+    if(mentionedUserIdStr == "") {
+        mentionedUserIdStr = null;
+    }
+    console.log("mentionedUserIdStr: " + mentionedUserIdStr);
     
     // 해당 게시물 id의 기존 파일저장 경로를 가져온다.
     //let sql = 'SELECT file_save_names FROM post WHERE post_id = ' + hashmap.get("post_id");
@@ -447,9 +517,9 @@ router.post('/updatePost', async function(req,res) {
                 s3delete(file_save_names);
             }
 
-            let sqlUpdate = 'UPDATE post SET post_contents = ?, file_save_names = ?, upd_datetime_post = ? WHERE post_id = ?';
+            let sqlUpdate = 'UPDATE post SET post_contents = ?, file_save_names = ?, upd_datetime_post = ?, mentioned_user_list =? WHERE post_id = ?';
             // undefined를 넣어도 null로 넣어짐!
-            let datas = [hashmap.get("post_contents"), saveFileNames, time.timeToKr(), hashmap.get("post_id")];
+            let datas = [hashmap.get("post_contents"), saveFileNames, time.timeToKr(), mentionedUserIdStr, hashmap.get("post_id")];
 
             console.log("22")
             maria.query(sqlUpdate, datas, function (err, result) {
@@ -460,13 +530,17 @@ router.post('/updatePost', async function(req,res) {
                 } else {
                     console.log(sqlUpdate);
                     console.log(result);
-                    // 성공한 경우 
-                    res.send("success");
+                    // 성공한 경우 게시물 아이디와 내용을 넘겨준다.
+                    res.locals.postContents = hashmap.get("post_contents");
+                    res.locals.postId = hashmap.get("post_id");
+                    res.locals.gubun = 1;
+                    
+                    next();
                 }
             })
         }
     });
-})
+}, hashtag);
 
 /* 
     게시물 정보를 삭제한다.
@@ -498,7 +572,7 @@ router.post('/deletePost', async function(req,res) {
                 s3delete(file_save_names);
             }
             // 데이터베이스의 댓글 정보를 삭제한다.
-            let sqlDeleteComment = 'DELETE FROM comment WHERE post_id = ' + hashmap.get("post_id");cre_datetime_user_info
+            let sqlDeleteComment = 'DELETE FROM comment WHERE post_id = ' + hashmap.get("post_id");
             maria.query(sqlDeleteComment, function (err, result) {
                 if (err) {
                     console.log(sqlDeleteComment);
@@ -506,6 +580,19 @@ router.post('/deletePost', async function(req,res) {
                     throw err;
                 } else {
                     console.log(sqlDeleteComment);
+                    console.log(result);
+                }
+            });
+
+            // 데이터베이스의 해시태그 정보를 삭제한다.
+            let sqlDeleteHashTag = 'DELETE FROM hashtag WHERE post_id = ' + hashmap.get("post_id");
+            maria.query(sqlDeleteHashTag, function (err, result) {
+                if (err) {
+                    console.log(sqlDeleteHashTag);
+                    res.send("hashtag delete fail");
+                    throw err;
+                } else {
+                    console.log(sqlDeleteHashTag);
                     console.log(result);
                 }
             });
@@ -707,11 +794,17 @@ function parseMultiParts(req){
         let filetempName;
         // 필드정보를 저장할 해시맵
         hashmap = new HashMap();
+        // 멘션된 유저아이디를 저장할 배열
+        arr = new Array();
 
         //텍스트 정보를 읽어와 맵에 저장.
         req.busboy.on('field',(name, value, info) => {
-            hashmap.set(name, value);
-            console.log("value: " + name , hashmap.get(name));
+            if(name.includes("mentioned_user_id_list[]")) {
+                arr.push(value);
+            } else {
+                hashmap.set(name, value);
+                console.log("value: " + name , hashmap.get(name));
+            }
         });
         
         // 파일 정보를 읽어와서 배열에 저장한다.
@@ -817,14 +910,20 @@ function parseFormData(req){
     return new Promise( (resolve)=>{
         // 필드정보를 저장할 해시맵
         hashmap = new HashMap();
+        // 멘션된 유저아이디를 저장할 배열
+        arr = new Array();
 
         // 데이터 스트림 만듬
         req.pipe(req.busboy);
 
         //텍스트 정보를 읽어와 맵에 저장.
         req.busboy.on('field',(name, value, info) => {
-            hashmap.set(name, value);
-            console.log("value: " + name , hashmap.get(name));
+            if(name.includes("mentioned_user_id_list[]")) {
+                arr.push(value);
+            } else {
+                hashmap.set(name, value);
+                console.log("value: " + name , hashmap.get(name));
+            }
         });
 
         req.busboy.on("finish", function() {
@@ -888,4 +987,24 @@ function s3delete(filePath){
             }
           })
     }
+}
+
+async function parseMentionedUserList(result) {
+    for(let i = 0; i < result.length; i++ ){
+        // ','로 구분된 유저 아이디 문자열
+        let mentionedUserIdlist = result[i].mentioned_user_list
+
+        if(mentionedUserIdlist != null){
+            let arr = mentionedUserIdlist.split(",");
+        
+            for(let j = 0; j < arr.length; j++ ){
+                arr[j] = Number(arr[j]);
+            }
+    
+            result[i].mentioned_user_list = arr;
+        }
+
+    }
+
+    return result;
 }

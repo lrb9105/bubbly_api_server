@@ -8,6 +8,12 @@ const maria = require('../db/maria');
 const time = require('../util/time');
 const mention = require('../post/mention');
 
+// redis를 사용하기 위해
+const redis = require('redis');
+
+// redis 클라이언트
+const client = redis.createClient(6379,'127.0.0.1');
+
 // 외부에서 사용하기 위해 router를 넣어줌!
 module.exports = router;
 
@@ -20,25 +26,17 @@ let hashmap;
 let arr;
 
 /*
-    역할: 댓글 정보를 저장한다.
+    역할: 검색어 저장
     input: req, res
     output: 없음
 */
-router.post('/createComment', async function(req,res) {
+router.post('/createSerarchText', async function(req,res) {
     // 파라미터 정보를 파싱해서 해시맵에 저장한다
     await parseFormData(req);
 
-    // 멘션(@사용자명 -> 사용자 아이디) 파싱
-    let mentionedUserIdStr = await mention(arr);
-
-    if(mentionedUserIdStr == "") {
-        mentionedUserIdStr = null;
-    }
-    console.log("mentionedUserIdStr: " + mentionedUserIdStr);
-
     // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-    let queryStr = 'insert into comment (post_id, comment_writer_id, comment_depth, comment_contents, cre_datetime_comment, mentioned_user_list) values (?)';
-    let datas = [hashmap.get("post_id"), hashmap.get("comment_writer_id"), hashmap.get("comment_depth"), hashmap.get("comment_contents"), time.timeToKr(), mentionedUserIdStr];
+    let queryStr = 'insert into search_data_save (searcher_id, search_text, cre_datetime_search) values (?)';
+    let datas = [hashmap.get("searcher_id"), hashmap.get("search_text"), time.timeToKr()];
 
     // 저장!
     await maria.query(queryStr, [datas], function(err, rows, fields){
@@ -53,34 +51,87 @@ router.post('/createComment', async function(req,res) {
     });
 })
 
-// 게시물번호로 댓글 정보를 조회한다.
-router.get('/selectCommentUsingPostId', async function(req,res) {
-    // 쿼리문
-    let sql = "   select  c.post_id "
-             +"         , c.comment_writer_id "
-             +"         , c.comment_depth "
-             +"         , c.comment_contents "
-             +"         , ui.nick_name "
-             +"         , ui.profile_file_name "
-             + "        , c.mentioned_user_list "
-             +"  from comment c "
-             +"  inner join user_info ui on comment_writer_id = ui.user_id "
-            + "  where c.post_id = " + req.param("post_id");
+// 실시간 트렌드 조회
+router.get('/selectRealTimeTrends', async function(req,res) {
+    // 사용자가 보낸 현재시간 'yyyy-MM-dd HH:mm 형태'
+    let startTime = req.param("current_time");
+    const idx = startTime.indexOf(":");
+    const startHour = startTime.substring(idx - 2,idx);
 
-    console.log(sql);
+    // 시작시간
+    startTime = startTime.substring(0,idx + 1);
+    startTime += "00";
+    // 레디스에 저장할 키값
+    let redisKey = startTime.replace(" ", "-");
+    
+    let tDate = new Date(startTime);
 
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    // 한시간 더하기
+    tDate.setHours(tDate.getHours() + 1)
+    let year = tDate.getFullYear();
+    let month = ('0' + (tDate.getMonth() + 1)).slice(-2);
+    let day = ('0' + tDate.getDate()).slice(-2);
+    let hours = ('0' + tDate.getHours()).slice(-2); 
+    let minutes = ('0' + tDate.getMinutes()).slice(-2);
+    
+    let endTime = year + '-' + month  + '-' + day + " " +  hours + ':' + minutes;
 
-            res.send(newResult);
-        }
-    });
+    // 레디스에 저장할 데이터 만료시간
+    var unixEndTimestamp = Math.floor(new Date(endTime + ":00.000").getTime()/1000);
+
+    // 레디스 클라이언트 연결
+    await client.connect();
+
+    // 레디스에 실시간 트렌드 정보 저장되어있는지 확인
+    const key = "realtimetrend" + redisKey;
+                 
+    let realTimeTrendInfo = await client.get(key);
+
+    // 레디스에 저장되어있는 데이터가 없다면 db에서 조회
+    if(realTimeTrendInfo == null) {
+        // 쿼리문
+        let sql = " select name, sum(cnt) cnt "
+                + " from ( "
+                        + " select hashtag_name name, count(*) cnt "
+                        + " from hashtag "
+                        + " where cre_datetime_hashtag >= ? and cre_datetime_hashtag < ? "
+                        + " group by hashtag_name "
+                        + " union all "
+                        + " select search_text name, count(*) cnt "
+                        + " from search_data_save "
+                        + " where cre_datetime_search >= ? and cre_datetime_search < ? "
+                        + " group by search_text "
+                        + " ) as t1 "
+            + " group by name "
+            + " order by cnt desc "
+            + " limit 10 ";
+
+            const datas = [startTime, endTime, startTime, endTime];
+
+            await maria.query(sql, datas, async function (err, result) {
+                if (err) {
+                    console.log(sql);
+                    throw err;
+                } else {
+                    console.log(sql);
+                    console.log(result);
+
+                    // 레디스에 정보 저장 - 종료시간에 만료되도록
+                    resultJson = JSON.stringify(result);
+
+                    await client.set(key, resultJson,'EXAT',unixEndTimestamp);
+                    await client.quit();
+
+                    console.log("maria에서 조회");
+                    res.send(result);
+                }
+            });
+    } else {
+        await client.quit();
+        
+        res.send(JSON.parse(realTimeTrendInfo));
+        console.log("redis에서 조회");
+    }
 });
 
 // 사용자 아이디로 댓글 정보를 조회한다.

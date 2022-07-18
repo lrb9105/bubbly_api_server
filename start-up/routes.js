@@ -13,6 +13,12 @@ const followingRouter = require("../following/followingRouter");
 const utilRouter = require("../util/utilRouter");
 const loginRouter = require("../login/loginRouter");
 const nftRouter = require("../nft/nftRouter");
+const hashtagRouter = require("../hashtag/hashtagRouter");
+const chatRouter = require("../chat/chatRouter");
+const testRouter = require("../test/testRouter");
+const mentionRouter = require("../mention/mentionRouter");
+const realtimetrendRouter = require("../realtimetrend/realtimetrendRouter");
+
 // jwt토큰 검증
 const jwtToken = require('../util/jwtToken');
 
@@ -37,6 +43,11 @@ module.exports = function(app) {
   app.use("/util", utilRouter);
   app.use("/login", loginRouter);
   app.use("/nft", nftRouter);
+  app.use("/hashtag", hashtagRouter);
+  app.use("/chat", chatRouter);
+  app.use("/test", testRouter);
+  app.use("/mention", mentionRouter);
+  app.use("/realtimetrend", realtimetrendRouter);
   app.use("/static",express.static('nft-storage'));
   app.use("/config",express.static('backendForSmartContract/config'));
 };

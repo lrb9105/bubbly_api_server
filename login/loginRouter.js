@@ -57,50 +57,56 @@ router.post('/login', async function(req,res) {
             // db에서 가져온 login_id
             const login_pw = rows[0].login_pw;
             
+            console.log("login_pw: " + login_pw);
             // id가 존재하지 않는다면
             if(login_pw == null) {
                 res.send("not exist");    
-            } else {
+            } else { // id가 존재한다면 비밀번호 체크
                 const salt = rows[0].salt;
                 const result = passwordCrypto.verifyPassword(password, salt, login_pw);
                 
                 // 일치하는 비밀번호가 있다면 토큰 생성
                 result.then(async (value) => {
-                    const user_id = rows[0].user_id;
-                    const nick_name = rows[0].nick_name;
+                    
+                    if(value == "success"){
+                        const user_id = rows[0].user_id;
+                        const nick_name = rows[0].nick_name;
 
-                    // 1. refreshToken 토큰 생성
-                    const refreshToken = await jwt.sign({},
-                        config.jwt_secretKey, {
-                        expiresIn: '14d',
-                        issuer: 'bubbly'
-                    });
+                        // 1. refreshToken 토큰 생성
+                        const refreshToken = await jwt.sign({},
+                            config.jwt_secretKey, {
+                            expiresIn: '14d',
+                            issuer: 'bubbly'
+                        });
 
-                    // 2. redis에 refreshToken 저장
-                    await client.connect();
-                    const key = "refreshToken" + user_id;
-             
-                    await client.set(key, refreshToken);
+                        // 2. redis에 refreshToken 저장
+                        await client.connect();
+                        const key = "refreshToken" + user_id;
                 
-                    //const savedToken = await client.get(key);
-                    //console.log("refreshToken: " + savedToken);
-            
-                    // 14일 후에 자동삭제
-                    await client.expire(key, 60 * 60 * 24 * 14);
-            
-                    await client.quit();
+                        await client.set(key, refreshToken);
+                    
+                        //const savedToken = await client.get(key);
+                        //console.log("refreshToken: " + savedToken);
+                
+                        // 14일 후에 자동삭제
+                        await client.expire(key, 60 * 60 * 24 * 14);
+                
+                        await client.quit();
 
-                    // 3. accessToken 생성
-                    // 토큰 세팅
-                    const accessToken = await jwt.sign({ user_id, nick_name },
-                        config.jwt_secretKey, {
-                        expiresIn: '1h',
-                        issuer: 'bubbly'
-                    });
+                        // 3. accessToken 생성
+                        // 토큰 세팅
+                        const accessToken = await jwt.sign({ user_id, nick_name },
+                            config.jwt_secretKey, {
+                            expiresIn: '1h',
+                            issuer: 'bubbly'
+                        });
 
-                    const token = {"accessToken" : accessToken, "refreshToken" : refreshToken};
+                        const token = {"accessToken" : accessToken, "refreshToken" : refreshToken};
 
-                    res.send(JSON.stringify(token));
+                        res.send(JSON.stringify(token));
+                    } else {
+                        res.send("fail");
+                    }
                 }).catch((error) => {
                     console.log(error);
                     res.send("fail");
