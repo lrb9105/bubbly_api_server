@@ -164,8 +164,8 @@ router.post('/createUserInfo', async function(req,res) {
     const salt = (await hashedPasswordObj).salt;
     
     // 데이터베이스에 커뮤니티 정보를 저장한다.
-    let queryStr = 'insert into user_info (login_id, login_pw, email_addr, phone_num, nick_name, salt, cre_datetime_user_info) values (?)';
-    let datas = [hashmap.get("login_id"), hashedPassword, hashmap.get("email_addr"), hashmap.get("phone_num"), hashmap.get("nick_name"), salt, time.timeToKr()];
+    let queryStr = 'insert into user_info (login_id, login_pw, email_addr, phone_num, nick_name, salt, cre_datetime_user_info, self_info) values (?)';
+    let datas = [hashmap.get("login_id"), hashedPassword, hashmap.get("email_addr"), hashmap.get("phone_num"), hashmap.get("nick_name"), salt, time.timeToKr(), hashmap.get("self_info")];
     
     // 저장!
     await maria.query(queryStr, [datas], function(err, rows, fields){
@@ -267,6 +267,8 @@ router.get('/selectUserInfo', async function(req,res) {
             + "     , phone_num "
             + "     , novaland_account_addr "
             + "     , profile_file_name "
+            + "     , nick_name "
+            + "     , self_info "
             + "from user_info "
             + "where user_id = " +  req.param("user_id");
 
@@ -285,7 +287,7 @@ router.get('/selectUserInfo', async function(req,res) {
 });
 
 // 이미 존재하는 아이디인지 조회한다.
-router.get('/selectIsExisingId', async function(req,res) {
+router.get('/selectIsExistingId', async function(req,res) {
     // 쿼리문
     let sql = "select case when login_id is null then 'not exist' else 'exist' end is_exist "
             + "from user_info "
@@ -349,10 +351,11 @@ router.post('/updateUserInfo', async function(req,res) {
                           + "   , nick_name = ? "
                           + "   , profile_file_name = ? "
                           + "   , upd_datetime_user_info = ? "
+                          + "   , self_info = ? "
                           + "where user_id = ? "
 
             // undefined를 넣어도 null로 넣어짐!
-            let datas = [hashmap.get("login_id"), hashmap.get("email_addr"), hashmap.get("phone_num"),hashmap.get("nick_name"),saveFileNames, time.timeToKr(), hashmap.get("user_id")];
+            let datas = [hashmap.get("login_id"), hashmap.get("email_addr"), hashmap.get("phone_num"),hashmap.get("nick_name"),saveFileNames, time.timeToKr(), hashmap.get("self_info"), hashmap.get("user_id")];
 
             maria.query(sqlUpdate, datas, function (err, result) {
                 if (err) {
@@ -584,7 +587,40 @@ router.post('/updateUserProfile', async function(req,res) {
             })
         }
     });
-})
+});
+
+/* 
+    역할: 비밀번호를 변경한다.
+    input: req, res
+    output: 없음
+*/
+router.post('/modifyPassword', async function(req,res) {
+    // 받아온 회원정보를 해시맵에 저장한다.
+    await parseFormData(req);
+
+    // 암호화된 비밀번호 생성
+    const userId = hashmap.get("user_id");
+    const password = hashmap.get("modify_pw");
+    const hashedPasswordObj = passwordCrypto.createHashedPassword(password);
+    const hashedPassword = (await hashedPasswordObj).hashedPassword;
+    const salt = (await hashedPasswordObj).salt;
+    
+    // 사용자 비밀번호를 수정한다.
+    let queryStr = 'update user_info set login_pw = ? , salt = ? , upd_datetime_user_info = ? where user_id = ?';
+    let datas = [hashedPassword, salt, time.timeToKr(), userId];
+    
+    // 저장!
+    await maria.query(queryStr, datas, function(err, rows, fields){
+        if(!err){
+            console.log("성공");
+            res.send("success");
+        } else {
+            console.log(err);
+            console.log("실패");
+            res.send("fail");
+        }
+    });
+});
 
 // 이메일로 인증번호 전송
 router.post('/sendEmailCertificationNum', async function(req,res) {
@@ -614,7 +650,7 @@ router.post('/sendEmailCertificationNum', async function(req,res) {
 })
 
 // 이메일 인증번호 검증
-router.get('/verfyEmailCertificationNum', async function(req,res) {
+router.get('/verifyEmailCertificationNum', async function(req,res) {
     // 받아온 이메일 및 인증번호 저장
     const email_addr = req.param("email_addr");
     const certification_num = req.param("certification_num");
@@ -625,7 +661,7 @@ router.get('/verfyEmailCertificationNum', async function(req,res) {
 
 
 // 휴대폰 인증번호 검증
-router.get('/verfyPhoneCertificationNum', async function(req,res) {
+router.get('/verifyPhoneCertificationNum', async function(req,res) {
     // 받아온 휴대폰번호 및 인증번호 저장
     const phone_num = req.param("phone_num");
     const certification_num = req.param("certification_num");

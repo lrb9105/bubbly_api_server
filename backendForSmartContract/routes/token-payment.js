@@ -48,19 +48,19 @@ module.exports = async function(req,res) {
                         maria.query(queryStr, datas, function(err, rows, fields){
                             if(!err){
                                 console.log("성공111");
-                                res.send("bubble 1개 지급");
+                                res.send("success_token_payment");
                             } else {
                                 console.log(err);
-                                res.send(err);
+                                res.send("fail");
                             }
                         });
                     } else {
                         console.log(err);
-                        res.send(err);
+                        res.send("fail");
                     }
                 });
             } else {
-                res.send("bubble 지급 안함");
+                res.send("success_token_not_payment");
             }
         } else {
             console.log(err);

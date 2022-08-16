@@ -56,6 +56,7 @@ router.post('/login', async function(req,res) {
         if(!err){
             // db에서 가져온 login_id
             const login_pw = rows[0].login_pw;
+            const user_id = rows[0].user_id;
             
             console.log("login_pw: " + login_pw);
             // id가 존재하지 않는다면
@@ -101,7 +102,7 @@ router.post('/login', async function(req,res) {
                             issuer: 'bubbly'
                         });
 
-                        const token = {"accessToken" : accessToken, "refreshToken" : refreshToken};
+                        const token = {"accessToken" : accessToken, "refreshToken" : refreshToken, "userId" : user_id};
 
                         res.send(JSON.stringify(token));
                     } else {

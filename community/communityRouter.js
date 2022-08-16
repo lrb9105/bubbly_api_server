@@ -7,8 +7,10 @@ const router = express.Router();
 const BUCKET_NAME = 'bubbly-s3';
 // aws-sdk를 사용하기 위해 가져 옴
 const AWS = require('aws-sdk');
+// 설정파일
+const config = require('../config/config');
 // s3에 접근하기 위해 accessKeyId와 secretAccessKey값을 넣어주고 s3객체를 생성한다.
-const s3 = new AWS.S3({accessKeyId: 'AKIAT2UD4WFJ4B6IC4EQ', secretAccessKey: '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'});
+const s3 = new AWS.S3({accessKeyId: config.s3_accessKeyId, secretAccessKey: config.s3_secretAccessKey});
 // mariaDB를 연결하기 위해 모듈 가져옴
 const maria = require('../db/maria');
 const time = require('../util/time');
