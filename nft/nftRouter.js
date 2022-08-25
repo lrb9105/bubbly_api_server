@@ -76,8 +76,10 @@ router.get('/selectAllSelledNftList', async function(req,res) {
             + "     , n.nft_name "
             + "     , n.nft_desc "
             + "     , n.file_save_url "
+            + "     , ui.novaland_account_addr "
             + "from nft_sell ns "
             + "inner join nft n on ns.nft_id = n.nft_id  "
+            + " inner join user_info ui on ns.seller_id = ui.user_id "
             + "where buy_yn = 'n'";
             
     await maria.query(sql, function (err, result) {
@@ -104,10 +106,12 @@ router.get('/selectSelledNftListUsingSellerId', async function(req,res) {
             + "     , n.nft_name "
             + "     , n.nft_desc "
             + "     , n.file_save_url "
-            + "from nft_sell ns "
-            + "inner join nft n on ns.nft_id = n.nft_id "
-            + "where buy_yn = 'n' "
-            + "and ns.seller_id = " + req.param("seller_id");
+            + "     , ui.novaland_account_addr "
+            + " from nft_sell ns "
+            + " inner join nft n on ns.nft_id = n.nft_id "
+            + " inner join user_info ui on ns.seller_id = ui.user_id "
+            + " where buy_yn = 'n' "
+            + " and ns.seller_id = " + req.param("seller_id");
             
     await maria.query(sql, function (err, result) {
         if (err) {

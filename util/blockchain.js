@@ -37,21 +37,32 @@ const makeBlockchainAddrAndMnemonic = function(){
 */
 const selectAccountInfo = async (addr) => {
     let configJson = await config.getConfigJson();
+    let acct_string;
 
     //algod 노드 접근 토큰
     nodeToken = configJson.SmartContractParams.token; 
+    console.log("algod 노드 접근 토큰: " + nodeToken);
+
     //algod 노드 ip 주소
     ipAddress = configJson.SmartContractParams.ip_address;
+    console.log("algod 노드 접근 ipAddress: " + ipAddress);
     //algod 노드 포트 
     port = configJson.SmartContractParams.port;
+    console.log("algod 노드 접근 port: " + port);
 
-    let algodClient = new algosdk.Algodv2({"X-API-Key" : nodeToken}, ipAddress, port);
+    if(addr != null){
+        let algodClient = new algosdk.Algodv2({"X-API-Key" : nodeToken}, ipAddress, port);
+        console.log("algodClient: " + algodClient);
+    
+        let account_info = (await algodClient.accountInformation(addr).do());
+    
+        acct_string = JSON.stringify(account_info);
+        console.log("Account Info: " + acct_string);
+    } else {
+        acct_string = "Novarand 계정정보가 없습니다.";
+    }
 
-    let account_info = (await algodClient.accountInformation(addr).do());
-
-    let acct_string = JSON.stringify(account_info);
-    console.log("Account Info: " + acct_string);
-
+    
     return acct_string;
 };
 
@@ -312,6 +323,56 @@ const transferToken = async (sender_mnemonic, receiver_mnemonic, assetID) => {
     //await printAssetHolding(algodclient, receiverAddr.addr, assetID);
 };
 
+/* 
+    버블 전송
+    입력: 계정주소
+    출력: {account 정보 json객체}
+*/
+const transferTokenByAccount = async (sender_mnemonic, receiverAddr, assetID) => {
+    let configJson = await config.getConfigJson();
+
+    //algod 노드 접근 토큰
+    nodeToken = configJson.SmartContractParams.token; 
+
+    //algod 노드 ip 주소
+    ipAddress = configJson.SmartContractParams.ip_address;
+    
+    //algod 노드 포트 
+    port = configJson.SmartContractParams.port;
+
+    let algodClient = await new algosdk.Algodv2({"X-API-Key" : nodeToken}, ipAddress, port);
+
+    let params = await algodClient.getTransactionParams().do();
+
+    const senderAddr = await algosdk.mnemonicToSecretKey(sender_mnemonic);
+
+    params = await algodClient.getTransactionParams().do();
+    params.fee = 1000;
+    params.flatFee = true;
+
+    sender = senderAddr.addr;
+    recipient = receiverAddr;
+    revocationTarget = undefined;
+    closeRemainderTo = undefined;
+    note = new Uint8Array(0)
+    //Amount of the asset to transfer
+    amount = 10000000000;
+
+    // signing and sending "txn" will send "amount" assets from "sender" to "recipient"
+    let xtxn = await algosdk.makeAssetTransferTxnWithSuggestedParams(sender, recipient, closeRemainderTo, revocationTarget,amount,  note, assetID, params);
+    
+    // Must be signed by the account sending the asset  
+    rawSignedTxn = await xtxn.signTxn(senderAddr.sk)
+
+    let xtx = (await algodClient.sendRawTransaction(rawSignedTxn).do());
+    console.log("Transaction : " + xtx.txId);
+    
+    // wait for transaction to be confirmed
+    await waitForConfirmation(algodClient, xtx.txId);
+
+    //await printAssetHolding(algodclient, receiverAddr.addr, assetID);
+};
+
 
 
 // Function used to wait for a tx confirmation
@@ -353,4 +414,4 @@ const printAssetHolding = async function (algodclient, account, assetid) {
     return "success";
 };
 
-module.exports = { makeBlockchainAddrAndMnemonic, selectAccountInfo, sendToAddrByDevAddr, tokenOptIn, transferToken};
+module.exports = { makeBlockchainAddrAndMnemonic, selectAccountInfo, sendToAddrByDevAddr, tokenOptIn, transferToken, transferTokenByAccount};

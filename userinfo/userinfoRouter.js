@@ -82,6 +82,13 @@ router.get('/transferToken',async function(req,res){
     res.send(result);
 });
 
+// bubble 받기
+router.get('/transferTokenByAccount',async function(req,res){   
+    const receiver_addr = req.param("receiver_addr");
+    const result = await blockchain.transferTokenByAccount("above luxury grocery barely obtain recipe record need card invest gold exclude market huge frozen wheat nation deal same option burst slam section about stone", receiver_addr, 94434081);
+    res.send(result);
+});
+
 // 블록체인 계정 토큰에 옵트인
 router.get('/optin',async function(req,res){
     const result = await blockchain.tokenOptIn("ginger primary envelope apart vivid lottery secret assume major canoe once manage hundred fragile blue point clutch unable once bitter destroy glue artist above ivory",94434081)   
@@ -110,7 +117,40 @@ router.post('/sendPhoneCertificationNum',async function(req,res){
                 // 휴대폰으로 인증번호 전송
                 auth.SendPhoneNumCertificationNum(req, res);
             } else { // 사용중
+                console.log("사용중인 번호: " + result);
                 res.send("exist");
+            }
+            
+        }
+    });
+});
+
+// 아이디찾기를 하기위해 휴대폰번호 입력 시 인증번호 전송
+// 휴대폰번호가 db에 존재해야 인증번호를 전송한다.
+router.post('/sendPhoneCertificationNumForFind',async function(req,res){
+    await parseFormData(req);
+
+    // 이미 사용중인 휴대폰번호인지 확인한다.
+    let sql = "select case when phone_num is null then 'not exist' else 'exist' end is_exist "
+            + "from user_info "
+            + "where phone_num = '" +  hashmap.get("phone_num") + "'";
+
+    console.log(sql);
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            // 사용가능
+            if(result == ""){
+                // 휴대폰번호가 db에 없으면 
+                res.send("not exist");
+            } else { 
+                // 휴대폰번호가 db에 있다면
+                console.log("사용중인 번호: " + result);
+                auth.SendPhoneNumCertificationNum(req, res);
             }
             
         }
@@ -193,6 +233,8 @@ router.post('/createAddrToBlockchain', async function(req,res) {
     // 사용자 아이디
     const user_id = hashmap.get("user_id");
 
+    console.log("createAddrToBlockchain: " + user_id)
+
     // 사용자 계정과 니모닉을 저장하는 변수
     let accountAndMnemonic;
 
@@ -261,16 +303,18 @@ router.get('/selectAddrUsingAddr',async function(req,res){
 // 사용자 정보를 조회한다.
 router.get('/selectUserInfo', async function(req,res) {
     // 쿼리문
-    let sql = "select user_id "
-            + "     , login_id "
-            + "     , email_addr "
-            + "     , phone_num "
-            + "     , novaland_account_addr "
-            + "     , profile_file_name "
-            + "     , nick_name "
-            + "     , self_info "
-            + "from user_info "
-            + "where user_id = " +  req.param("user_id");
+    let sql = "select ui.user_id "
+            + "     , ui.login_id "
+            + "     , ui.email_addr "
+            + "     , ui.phone_num "
+            + "     , ui.novaland_account_addr "
+            + "     , ui.profile_file_name "
+            + "     , ui.nick_name "
+            + "     , ui.self_info "
+            + "     , ft.token "
+            + " from user_info ui"
+            + " left join fcm_token ft on ui.user_id = ft.user_id"
+            + " where ui.user_id = " +  req.param("user_id");
 
     console.log(sql);
 
@@ -307,6 +351,127 @@ router.get('/selectIsExistingId', async function(req,res) {
                 res.send("exist");
             }
             
+        }
+    });
+});
+
+// 사용자가 입력한 검색에에 해당하는 사람들을 조회한다.
+// 10명 제한
+// 내가 팔로우한 사람들, 나를 팔로우한 사람들, 나머지 순서로 정렬
+router.get('/selectSearchedUserList', async function(req,res) {
+    const userId = req.param("user_id");
+    const searchText = req.param("search_text");
+    
+    // 쿼리문
+    let sql = "select * from ( "
+                + "select  ui.user_id "
+                + "     , ui.login_id "
+                + "     , ui.email_addr "
+                + "     , ui.phone_num "
+                + "     , ui.novaland_account_addr "
+                + "     , ui.profile_file_name "
+                + "     , ui.nick_name "
+                + "     , ui.self_info "
+                + "     , ft.token "
+                + " from following f "
+                + " inner join user_info ui on f.followee_id= ui.user_id "
+                + " left join fcm_token ft on ui.user_id = ft.user_id "
+                + " where f.follower_id = " + userId
+                + " and (login_id like '" + searchText+ "%' or nick_name like '" + searchText +"%') "
+                + " union "
+                + " select  ui.user_id "
+                + "     , ui.login_id "
+                + "     , ui.email_addr "
+                + "     , ui.phone_num "
+                + "     , ui.novaland_account_addr "
+                + "     , ui.profile_file_name "
+                + "     , ui.nick_name "
+                + "     , ui.self_info "
+                + "     , ft.token "
+                + " from following f "
+                + " inner join user_info ui on f.follower_id= ui.user_id "
+                + " left join fcm_token ft on ui.user_id = ft.user_id "
+                + " where f.followee_id = " + userId
+                + " and (login_id like  '" + searchText +"%' or nick_name like  '" + searchText + "%') "
+                + " union "
+                + " select ui.user_id "
+                + "     , login_id "
+                + "     , email_addr "
+                + "     , phone_num "
+                + "     , novaland_account_addr "
+                + "     , profile_file_name "
+                + "     , nick_name "
+                + "     , ui.self_info "
+                + "     , ft.token "
+                + " from user_info ui "
+                + " inner join fcm_token ft on ui.user_id = ft.user_id "
+                + " where ui.user_id != " + userId +" and (login_id like  '" + searchText +"%' or nick_name like '" + searchText +"%')"
+                + " ) s limit 10";
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+            res.send(result);
+        }
+    });
+});
+
+// 사용자 검색 결과를 조회한다.
+router.get('/selectUserSearchResultList', async function(req,res) {
+    const searchText = req.param("search_text");
+    const userId = req.param("user_id");
+
+    console.log("searchText : " + searchText);
+
+    // 쿼리문
+    let sql = "select * from ( "
+                    + "select  ui.user_id "
+                    + "     , ui.login_id "
+                    + "     , ui.profile_file_name "
+                    + "     , ui.nick_name "
+                    + "     , ui.self_info "
+                    + " from following f "
+                    + " inner join user_info ui on f.followee_id= ui.user_id "
+                    + " left join fcm_token ft on ui.user_id = ft.user_id "
+                    + " where f.follower_id = " + userId
+                    + " and (self_info like '%" + searchText+ "%' or nick_name like '%" + searchText +"%') "
+                    + " union "
+                    + " select  ui.user_id "
+                    + "     , ui.login_id "
+                    + "     , ui.profile_file_name "
+                    + "     , ui.nick_name "
+                    + "     , ui.self_info "
+                    + " from following f "
+                    + " inner join user_info ui on f.follower_id= ui.user_id "
+                    + " left join fcm_token ft on ui.user_id = ft.user_id "
+                    + " where f.followee_id = " + userId
+                    + " and (self_info like  '%" + searchText +"%' or nick_name like  '%" + searchText + "%') "
+                    + " union "
+                    + " select ui.user_id "
+                    + "     , ui.login_id "
+                    + "     , ui.profile_file_name "
+                    + "     , ui.nick_name "
+                    + "     , ui.self_info "
+                    + " from user_info ui "
+                    + " inner join following fo on ui.user_id = fo.followee_id or ui.user_id = fo.follower_id "
+                    + " left join fcm_token ft on ui.user_id = ft.user_id "
+                    + " where ui.user_id != " + userId +" and (self_info like  '%" + searchText +"%' or nick_name like '%" + searchText +"%')"
+                    + " ) s limit 20";
+
+    console.log(sql);
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+            res.send(result);
         }
     });
 });
@@ -670,6 +835,16 @@ router.get('/verifyPhoneCertificationNum', async function(req,res) {
     certification_num_from_redis = redis_operator.PhoneCertificationGet(phone_num, certification_num, res);
 });
 
+// 휴대폰 인증번호 검증후 로그인 아이디 반환
+router.get('/verifyPhoneNumAndGetLoginId', async function(req,res) {
+    // 받아온 휴대폰번호 및 인증번호 저장
+    const phone_num = req.param("phone_num");
+    const certification_num = req.param("certification_num");
+
+    // redis에서 가져온 인증번호
+    certification_num_from_redis = redis_operator.PhoneCertificationAndLoginIdGet(phone_num, certification_num, res);
+});
+
 /* form 데이터를 파싱한다(텍스트만 있다).
     input: req
     output: hashMap <= 필드데이터가 key, value로 저장되어있음
@@ -941,7 +1116,7 @@ const auth = {
                 } else { 
                     resultCode = 200; 
                     // 휴대폰으로 인증번호 전송 완료
-                    // redis에 저장
+                    // redis에 저장                    
                     redis_operator.PhoneCertificationSet(user_phone_number, random);
                     resUpper.send("success");
                 }
@@ -1021,6 +1196,50 @@ const redis_operator = {
             await client.quit();
 
             res.send("equal");
+        } else { // 동일하지 않다면 not equal 전송
+            await client.quit();
+
+            res.send("not equal");
+        }
+    }, PhoneCertificationAndLoginIdGet: async(user_phone_number, certification_num, res) => {
+        await client.connect();
+        console.log("연결")
+    
+        // 값을 가져 옴.
+        const value = await client.get(user_phone_number);
+
+        console.log("가져온 값: "+ certification_num);
+        console.log("redis 값: "+ value);
+
+        /*  사용자가 보낸 인증번호와 redis에 저장된 인증번호가 동일하다면
+            1. redis에 있는 인증번호 삭제
+            2. equal 전송!
+        */
+        if(certification_num == value){
+            console.log("11");
+            // 삭제!
+            client.del(user_phone_number)
+            console.log("22");
+            await client.quit();
+            console.log("33");
+            // 로그인 아이디 가져오기
+            let sql =  "   select  login_id, user_id "
+                    +"     from user_info "
+                    +"     where phone_num = '" + user_phone_number + "'";
+            console.log("sql1: " + sql);
+            
+            await maria.query(sql, function (err, result) {
+                if (err) {
+                    console.log("sql2: " + sql);
+                    throw err;
+                } else {
+                    console.log("sql3: " + sql);
+
+                    console.log(result);
+                    
+                    res.send(result);
+                }
+            });
         } else { // 동일하지 않다면 not equal 전송
             await client.quit();
 

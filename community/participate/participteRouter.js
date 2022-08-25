@@ -33,7 +33,7 @@ router.post('/createCommunityParticipant', async function(req,res) {
     await maria.query(queryStr, [datas], function(err, rows, fields){
         if(!err){
             console.log("성공");
-            res.send("success");
+            res.send(hashmap.get("community_id"));
         } else {
             console.log(err);
             console.log("실패");

@@ -63,6 +63,8 @@ router.get('/selectCommentUsingPostId', async function(req,res) {
              +"         , ui.nick_name "
              +"         , ui.profile_file_name "
              + "        , c.mentioned_user_list "
+             + "        , c.comment_id "
+             + "        , c.cre_datetime_comment "
              +"  from comment c "
              +"  inner join user_info ui on comment_writer_id = ui.user_id "
             + "  where c.post_id = " + req.param("post_id");
@@ -94,6 +96,8 @@ router.get('/selectCommentUsingCommentWriterId', async function(req,res) {
                     +"         , ui.nick_name "
                     +"         , ui.profile_file_name "
                     + "        , c.mentioned_user_list "
+                    + "        , c.comment_id "
+                    + "        , c.cre_datetime_comment "
                     +"  from comment c "
                     +"  inner join user_info ui on comment_writer_id = ui.user_id "
                     +"  where c.comment_writer_id = " + req.param("comment_writer_id");

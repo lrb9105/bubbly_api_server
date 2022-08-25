@@ -1,0 +1,5 @@
+<?php
+  <html>
+    <meta http-equiv="refresh" content="0;url=bubbly://3.39.84.115/post/<?php echo $_GET["id"];?>">
+  </html>
+?>

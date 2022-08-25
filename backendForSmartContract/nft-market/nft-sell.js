@@ -10,6 +10,8 @@ var arr = [];
 let mnemonic, nftID, sellPrice;
 
 function main(req,res) {
+    console.log("nft_main 들어옴");
+
   return new Promise(async(resolve)=>{
     await parseMultiParts(req); 
     mnemonic = arr[0]; //nft실소유자 주소
@@ -43,6 +45,7 @@ function main(req,res) {
     await maria.query(queryStr, [datas], function(err, rows, fields){
         if(!err){
             console.log("성공");
+            console.log("nft판매요청 성공: " + queryStr);
         } else {
             console.log("실패");
             console.log(err);
@@ -89,9 +92,12 @@ function requestSellNFT(devAddress, devMnemonic, nftOwnerAddress, nftID, sellPri
         ip_address: ipAddress
     }})  
     .then(function (response) {
+        console.log("nft판매요청 성공");
         return response;
     })
     .catch(function (error) {
+        console.log("nft판매요청 실패");
+        console.log(err);
     });
 }
 

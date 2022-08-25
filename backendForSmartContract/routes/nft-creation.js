@@ -8,6 +8,8 @@ const algosdk = require('algosdk');
 
 //요청을 post로 수신하고 처리 결과 응답을 반환한다.
 router.post('/', async function(req,res) {
+    console.log("nft_creation 들어옴!");
+    
     var nft_creation = require("../nft-market/nft-create");
     var resolve = await nft_creation.main(req, res);
     console.log(resolve.data);

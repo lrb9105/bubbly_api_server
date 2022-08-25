@@ -12,7 +12,7 @@ module.exports = async function(req,res) {
 
     console.log("gubun: " + gubun);
     
-    // 해당 게시물의 좋아요 카운트를 0으로 바꿔준다.
+    // 해당 게시물의 기존 해시태그를 삭제한다.
     let queryStrDelete = 'delete from hashtag where post_id = ?';
     let datasDelete = [postId];
     if(gubun == 1){
@@ -48,21 +48,26 @@ module.exports = async function(req,res) {
         }
     }
 
-    hashTagJson = hashTagJson.substring(0, hashTagJson.length -1);
-    hashTagJson += "]";
-
-    // 프로시저를 호출해서 해당 해시태그를 저장한다.
-    let queryStr = 'call insert_hashtag(?, ?)';
-    let datas = [postId, hashTagJson];
-
-    // 저장!
-    maria.query(queryStr, datas, function(err, rows, fields){
-        if(!err){
-            console.log("성공");
-            res.send("success")
-        } else {
-            console.log(err);
-            res.send(err);
-        }
-    });
+    // 저장할 해시태그가 존재한다면 파싱해서 저장한다!!
+    if(hashTagJson != "["){
+        hashTagJson = hashTagJson.substring(0, hashTagJson.length -1);
+        hashTagJson += "]";
+    
+        // 프로시저를 호출해서 해당 해시태그를 저장한다.
+        let queryStr = 'call insert_hashtag(?, ?)';
+        let datas = [postId, hashTagJson];
+    
+        // 저장!
+        maria.query(queryStr, datas, function(err, rows, fields){
+            if(!err){
+                console.log("성공");
+                res.send("success")
+            } else {
+                console.log(err);
+                res.send(err);
+            }
+        });
+    } else {
+        res.send("success");
+    }
 }

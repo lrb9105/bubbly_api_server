@@ -41,14 +41,28 @@ router.post('/createCommunity', async function(req,res) {
     console.log(saveFileNames);
     
     // 데이터베이스에 커뮤니티 정보를 저장한다.
-    let queryStr = 'insert into community ( community_owner_id, community_name, community_desc, profile_file_name, cre_datetime_community) values (?)';
-    let datas = [hashmap.get("community_owner_id"), hashmap.get("community_name"), hashmap.get("community_desc"), saveFileNames, time.timeToKr()];
+    let queryStr = 'insert into community ( community_owner_id, community_name, community_desc, profile_file_name, cre_datetime_community, rule) values (?)';
+    let datas = [hashmap.get("community_owner_id"), hashmap.get("community_name"), hashmap.get("community_desc"), saveFileNames, time.timeToKr(), hashmap.get("rule")];
     
     // 저장!
-    await maria.query(queryStr, [datas], function(err, rows, fields){
+    await maria.query(queryStr, [datas], async function(err, rows, fields){
         if(!err){
             console.log("성공");
-            res.send("success");
+
+            // 가장큰 커뮤니티 아이디 조회
+            let queryStr2 = 'select max(community_id) community_id from community';
+            
+            // 저장!
+            await maria.query(queryStr2, function(err, rows, fields){
+                if(!err){
+                    console.log("rows[0].community_id: " + rows[0].community_id);
+                    res.send("" + rows[0].community_id);
+                } else {
+                    console.log(err);
+                    console.log("실패");
+                    res.send("fail");
+                }
+            });
         } else {
             console.log(err);
             console.log("실패");
@@ -65,8 +79,37 @@ router.get('/selectCommunityUsingCommunityId', async function(req,res) {
             + "     , community_name "
             + "     , community_desc "
             + "     , profile_file_name "
+            + "     , rule "
             + "from community "
             + "where community_id = " +  req.param("community_id");
+
+    console.log(sql);
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+            res.send(result);
+        }
+    });
+});
+
+// 특정 커뮤니티 정보 검색
+router.get('/selectCommunitySearchResultList', async function(req,res) {
+    const searchText = req.param("search_text");
+
+    // 쿼리문
+    let sql = "select community_id "
+            + "     , community_owner_id "
+            + "     , community_name "
+            + "     , community_desc "
+            + "     , profile_file_name "
+            + "     , rule "
+            + "from community "
+            + "where (community_desc like  '%" + searchText +"%' or community_name like  '%" + searchText + "%')";
 
     console.log(sql);
 
@@ -115,8 +158,8 @@ router.get('/selectCommunityListUsingUserId', async function(req,res) {
             + "     , c.community_name "
             + "     , c.community_desc "
             + "     , c.profile_file_name "
+            + "     , c.rule "
             + "from community c "
-            + "inner join participating_community pc on c.community_id = pc.community_id "
             + "where c.community_id in (select community_id from participating_community where user_id = " + req.param("user_id")+ ")";
 
     console.log(sql);
@@ -160,21 +203,39 @@ router.post('/updateCommunity', async function(req,res) {
             
             console.log("커뮤니티 수정 - profile_file_name: " + profile_file_name);
 
-            // s3에서 해당 파일 삭제
-            // 파일명이 있다면 삭제!
-            if(profile_file_name != null) {
-                s3delete(profile_file_name);
-            }
+            let datas;
+            let sqlUpdate;
 
-            let sqlUpdate = "update community "
+
+            console.log("saveFileNames: " + saveFileNames);
+
+            // 수정할 프로필이 있다면!
+            if(saveFileNames != undefined ) {
+                // 이전에 저장한 프로필이 있다면 s3에서 해당 파일 삭제
+                if(profile_file_name != null){
+                    s3delete(profile_file_name);
+                }
+
+                sqlUpdate = "update community "
                           + "set community_name = ? "
                           + "  , community_desc = ? "
                           + "  , profile_file_name =  ? "
                           + "  , upd_datetime_community = ? "
+                          + "  , rule = ? "
+                          + "  where community_id = ? ";
+
+                datas = [hashmap.get("community_name"), hashmap.get("community_desc"), saveFileNames, time.timeToKr(), hashmap.get("rule"), hashmap.get("community_id")];
+            } else { //커뮤니티 프로필 수정 안함!
+                sqlUpdate = "update community "
+                          + "set community_name = ? "
+                          + "  , community_desc = ? "
+                          + "  , upd_datetime_community = ? "
+                          + "  , rule = ? "
                           + "  where community_id = ? "
 
             // undefined를 넣어도 null로 넣어짐!
-            let datas = [hashmap.get("community_name"), hashmap.get("community_desc"), saveFileNames, time.timeToKr(), hashmap.get("community_id")];
+                datas = [hashmap.get("community_name"), hashmap.get("community_desc"), time.timeToKr(), hashmap.get("rule"), hashmap.get("community_id")];
+            }
 
             maria.query(sqlUpdate, datas, function (err, result) {
                 if (err) {

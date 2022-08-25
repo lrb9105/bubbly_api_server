@@ -19,6 +19,7 @@ module.exports = router;
 
 // 요청 값을 저장하기 위한 해시맵
 const HashMap  = require ('hashmap') ;
+const { user } = require('../config/config');
 // hashmap은 여러 함수에서 사용할 것이므로 인스턴스 변수로 생성
 let hashmap;
 
@@ -31,15 +32,31 @@ router.post('/createChatRoom', async function(req,res) {
     // 파라미터 정보를 파싱해서 해시맵에 저장한다
     const chatRoomInfo = req.body;
     
-    const chatRoomName = chatRoomInfo["chatRoomName"];
+    // 채팅방 정보
+    console.log("chatRoomInfo: " + chatRoomInfo);
+
+    // 생성자에게 보여질 채팅방명
+    const chatRoomNameCreator = chatRoomInfo["chatRoomNameCreator"];
+    console.log("chatRoomNameCreator: " + chatRoomNameCreator); 
+
+    // 생성자가 아닌 다른 사람에게 보여질 채팅방명
+    const chatRoomNameOther = chatRoomInfo["chatRoomNameOther"];
+    console.log("chatRoomNameOther: " + chatRoomNameOther); 
     
-    console.log(chatRoomName);
-    const cahtRoomMemberList = chatRoomInfo["cahtRoomMemberList"];
-    console.log(cahtRoomMemberList[0]["user_id"]);
+    // 생성자의 user_id - 프로필 조회 위해 필요
+    const chatCreatorId = chatRoomInfo["chatCreatorId"];
+    console.log("chatCreatorId: " + chatCreatorId); 
+
+    // 생성자가 아닌 다른 사람 user_id - 프로필 조회 위해 필요
+    const chatOtherId = chatRoomInfo["chatOtherId"];
+    console.log("chatOtherId: " + chatOtherId); 
+
+    const chatRoomMemberList = chatRoomInfo["chatRoomMemberList"];
+    console.log(chatRoomMemberList[0]);
 
     // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-    let queryStr = 'insert into chat_room (chat_room_name, cre_datetime_chat_room) values (?)';
-    let datas = [chatRoomName, time.timeToKr()];
+    let queryStr = 'insert into chat_room (chat_room_name_creator, chat_room_name_other, chat_creator_id, chat_other_id, cre_datetime_chat_room) values (?)';
+    let datas = [chatRoomNameCreator, chatRoomNameOther, chatCreatorId, chatOtherId, time.timeToKr()];
     
     // 저장!
     await maria.query(queryStr, [datas], async function(err, rows, fields){
@@ -52,14 +69,18 @@ router.post('/createChatRoom', async function(req,res) {
                     console.log("성공");
                     // 채팅방 아이디
                     const chatRoomId = rows[0].chat_room_id;
-                    
+                    console.log("생성한 채팅방 아이디: " + chatRoomId);
+
                     // 채팅방 멤버의 정보리스트를 만든다.
-                    const memberSize = cahtRoomMemberList.length;
+                    const memberSize = chatRoomMemberList.length;
                     let memberQuery = "";
                     let timeArr = [];
 
                     for(let i = 0; i < memberSize; i++){
-                        const userId = cahtRoomMemberList[i]["user_id"];
+                        const userId = chatRoomMemberList[i];
+                        
+                        console.log("userId:" + userId);
+
                         memberQuery += "(" + userId + ", " + chatRoomId + ", ?),"
                         timeArr[i] = time.timeToKr();
                     }
@@ -74,8 +95,8 @@ router.post('/createChatRoom', async function(req,res) {
                     // 저장!
                     await maria.query(queryStr3, timeArr, function(err, rows, fields){
                         if(!err){
-                            console.log("성공");
-                            res.send("success");
+                            console.log("채팅방 저장 성공");
+                            res.send("" + chatRoomId);
                         } else {
                             console.log("실패");
                             console.log(err);
@@ -169,26 +190,50 @@ router.post('/createChatStaticContents', async function(req, res, next) {
 // 사용자 아이디로 채팅방리스트를 조회한다.
 router.get('/selectChatRoomListUsingUserId', async function(req,res) {
     // 쿼리문
-    let sql = "select cr.chat_room_id "
-            + "     , cr.chat_room_name "
-            + "     , cr.profile_file_name "
-            + "     , cc.chat_msg "
-            + "     , cc.cre_datetime_msg "
+    let sql = " select cr.chat_room_id "
+            + "      , cr.chat_creator_id "
+            + "      , cr.chat_room_name_creator "
+            + "      , cr.chat_room_name_other "
+            + "      , cr.latest_msg "
+            + "      , cr.latest_msg_time "
+            + "      , cr.latest_msg_id "
+            + "      , (select count(chat_room_id) from chat_participant where chat_room_id = cr.chat_room_id) member_count "
+            + "      , (select profile_file_name from user_info where user_id = cr.chat_creator_id) profile_file_name_other "
+            + "      , (select profile_file_name from user_info where user_id = cr.chat_other_id) profile_file_name_creator "
             + " from chat_room cr "
-            + " inner join chat_participant cp on cr.chat_room_id = cp.chat_room_id "
-            + " inner join ( "
-                + "    select cc.chat_msg "
-                + "        , cc.chat_room_id "
-                + "     , cc.cre_datetime_msg  "
-                + " from chat_contents cc "
-                + "inner join ( "
-                    + " select chat_room_id "
-                    + "        , max(chat_msg_id) chat_msg_id "
-                    + " from chat_contents "
-                    + " where chat_room_id in (select chat_room_id from chat_participant where user_id = " + req.param("user_id")+ ")"
-                    + " group by chat_room_id) cc2 on cc.chat_room_id = cc2.chat_room_id and cc.chat_msg_id = cc2.chat_msg_id "
-                    + " ) cc on cr.chat_room_id = cc.chat_room_id "
-                    + " where cp.user_id = " + req.param("user_id");
+            + " inner join (select chat_room_id from chat_participant where user_id = " + req.param('user_id')+ " ) cp on cr.chat_room_id = cp.chat_room_id"
+            + " where cr.latest_msg is not null"
+            + " order by cr.latest_msg_time desc"
+
+    console.log(sql);
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+            res.send(result);
+        }
+    });
+});
+
+// 채팅방 아이디로 채팅방 정보 조회
+router.get('/selectChatRoomInfo', async function(req,res) {
+    // 쿼리문
+    let sql = " select chat_room_id "
+            + "     , chat_creator_id "
+            + "     , chat_room_name_creator "
+            + "     , chat_room_name_other "
+            + "     , latest_msg "
+            + "     , latest_msg_time "
+            + "     , latest_msg_id "
+            + "     , (select count(chat_room_id) from chat_participant where chat_room_id = cr.chat_room_id) member_count "
+            + "     , (select profile_file_name from user_info where user_id = cr.chat_creator_id) profile_file_name_other "
+            + "     , (select profile_file_name from user_info where user_id = cr.chat_other_id) profile_file_name_creator "
+            + " from chat_room cr "
+            + " where chat_room_id = " + req.param('chat_room_id');
 
     console.log(sql);
 
@@ -287,8 +332,7 @@ router.post('/creteChatParticipant', async function(req,res) {
 // 채팅방 참여자 조회
 router.get('/selectChatParticipantUsingChatRoomId', async function(req,res) {
     // 쿼리문
-    let sql = " select cp.chat_room_id "
-            + "     , ui.user_id "
+    let sql = " select ui.user_id "
             + "     , ui.nick_name "
             + "     , ui.profile_file_name "
             + " from chat_participant cp "

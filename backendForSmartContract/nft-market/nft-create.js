@@ -19,13 +19,14 @@ var config = require('../config/get-config-parameter')
 // 충분한 알고양을 가지고 있는지 판단하기 위해
 var txn_condition = require('../transaction-condition/check-enough-txn-fee')
 // 사용자에게 받아온 정보를 저장하기 위해 사용한 배열
-var arr = [];
+var arr;
 // 클라이언트로부터 받은 파라미터 및 클라이언트로부터 받은 파일을 ipfs에 올린 후 반환받은 url객체(metadata_url) 
 let metadata_url, imageName, description, assetName, mnemonic;
 // 임시파일명. 클라이언트에서 파일을 받아 nft-market img에 이 임시파일명으로 저장 후, 이 파일명으로 다시 읽어서 ipfs에 업로드 
 let filetempname; 
 
 function main(req, res) {
+  console.log("main 들어옴!");
   return new Promise(async(resolve)=>{
     //클라이언트에서 수신한 파라미터를 배열에 저장 및 수신한 이미지 임시파일 저장.
     await parseMultiParts(req); 
@@ -56,6 +57,9 @@ function main(req, res) {
       prom.then(async(res)=>{
         //비동기 방식으로 임시 이미지 파일 삭제
         var removeFrom = path.join(`${__dirname}/img`, filetempname);
+        
+        console.log("storeMetaData 완료");
+
         fs.unlink(removeFrom, err => {
           if(err!=null){
           console.log("파일 삭제 Error 발생");
@@ -81,7 +85,7 @@ function main(req, res) {
         //클라이언트에서 받아온 nft실소유자 니모닉 
         nftOwnerMnemonic = mnemonic;
         //단위명이지만 수량이 1개이므로 piece로 defult로 하던가, 또는 코드와 같이 assetName으로 해도 무방함. 
-        unitName = assetName; 
+        unitName = "bubbly"; 
         //에셋명. 사용자가 바꾸지않고 클라이언트에서 임시로 생성해서 전달받아도 무방함.
         assetName = assetName; 
         //ipfs에 nft저장 후 반환된 metadata저장된 제이슨 ipfs 파일 경로
@@ -103,44 +107,46 @@ function main(req, res) {
         let fileSaveUrl;
 
         await axios.get(metadataUrl)
-        .then((response) =>{
+        .then(async (response) =>{
             let imageUrl = response.data["image"];
             fileSaveUrl = imageUrl.replace("ipfs://","https://ipfs.io/ipfs/");
+
             console.log(fileSaveUrl);
+            console.log("생성한 nft 블록체인에 저장");
+
+            // db에 저장
+            // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
+            let queryStr = 'insert into nft (nft_id, holder_id, nft_name, nft_desc, cre_datetime_nft, file_save_url) values (?)';
+            let datas = [nft_id, user_id, assetName, description, time.timeToKr(), fileSaveUrl];
+            
+            // 저장!
+            await maria.query(queryStr, [datas], async function(err, rows, fields){
+                if(!err){
+                    console.log("생성한 nft db에 저장");
+
+                    // 해당 nft가 포함된 게시물 nft_yn "y"로 업데이트 
+                    let queryStr = "update post set nft_post_yn = 'y', nft_id = ? where post_id = ?";
+                    let datas = [nft_id, post_id];
+                    
+                    await maria.query(queryStr, datas, function(err, rows, fields){
+                        if(!err){
+                            console.log("성공");
+                            console.log("nft로 생성한 게시물 nft_yn값 변경");
+                        } else {
+                            console.log("실패");
+                            console.log(err);
+                            res.send("fail");
+                        }
+                    });
+                } else {
+                    console.log("실패");
+                    console.log(err);
+                    res.send("fail");
+                }
+            });
         })
         .catch((err) => {
             console.log("Error!!",err);
-        });
-        
-
-        // db에 저장
-        // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-        let queryStr = 'insert into nft (nft_id, holder_id, nft_name, nft_desc, cre_datetime_nft, file_save_url) values (?)';
-        let datas = [nft_id, user_id, assetName, description, time.timeToKr(), fileSaveUrl];
-        
-        // 저장!
-        await maria.query(queryStr, [datas], async function(err, rows, fields){
-            if(!err){
-                console.log("성공");
-
-                // 해당 nft가 포함된 게시물 nft_yn "y"로 업데이트 
-                let queryStr = "update post set nft_post_yn = 'y', nft_id = ? where post_id = ?";
-                let datas = [nft_id, post_id];
-                
-                await maria.query(queryStr, datas, function(err, rows, fields){
-                    if(!err){
-                        console.log("성공");
-                    } else {
-                        console.log("실패");
-                        console.log(err);
-                        res.send("fail");
-                    }
-                });
-            } else {
-                console.log("실패");
-                console.log(err);
-                res.send("fail");
-            }
         });
 
       return resolve(result);
@@ -155,7 +161,12 @@ function main(req, res) {
 
 
 function parseMultiParts(req){
+  arr = [];
+  console.log("parseMultiParts 들어옴!");
+
   return new Promise( (resolve)=>{
+  console.log("parseMultiParts return 들어옴!");
+
   var image;
   req.pipe(req.busboy);
   req.busboy.on('field',(name, value, info) => { //텍스트 정보를 읽어와 배열에 저장.
@@ -170,7 +181,9 @@ function parseMultiParts(req){
       filetempname = `${random()}.${filetype}`; //랜덤하게 파일명 생성
       var saveTo = path.join(`${__dirname}/img`, filetempname); //파일저장경로 생성
       file.pipe(fs.createWriteStream(saveTo)); //file객체의 파이프라인에 있는 바이트를 읽어와 saveTo 경로에 파일 생성 
-      console.log(saveTo);
+      
+      console.log("임시파일 저장경로: " + saveTo);
+      
       return resolve();
     });
   })
@@ -181,6 +194,8 @@ function storeMetaData(imagename, filename){
   //메타데이터 제이슨 스트링 만들 문자열 생성
   const metaDataJson = `{"name": "${imagename}", "image": "undefined","properties": {"videoClip": "undefined"}}`;
   
+  console.log("metaDataJson: " + metaDataJson);
+
   //api.nft.storage에 form으로 보내기 위한 객체 로드
   const form = new FormData();
   
@@ -216,6 +231,8 @@ const random = (() => {
 
 function getAccount(mnemonic){
   return new Promise((resolve)=>{
+    console.log("mnemonic: " + mnemonic);
+
     let account = algosdk.mnemonicToSecretKey(mnemonic);
     return resolve(account);
   })
@@ -224,6 +241,8 @@ function getAccount(mnemonic){
 // nft생성 스마트컨트랙트에게 요청
 function requestCreateNFT(devAddress, devMnemonic, nftOwnerAddress, nftOwnerMnemonic, unitName, assetName, nftURL, nodeToken, ipAddress,port) {
   //axios.post(url[, data[, config]]) 형식으로 사용함.
+  console.log("requestCreateNFT: 들어옴");
+  
   return axios.post('http://127.0.0.1:5000/create_nft',null,{params: {
             dev_address: devAddress,
             dev_mnemonic: devMnemonic,
@@ -237,9 +256,11 @@ function requestCreateNFT(devAddress, devMnemonic, nftOwnerAddress, nftOwnerMnem
             ip_address: ipAddress
         }})  
         .then(function (response) {
+          console.log("response: " + response);
           return response;
         })
         .catch(function (error) {
+            console.log("error: " + error);
         });
 }
 

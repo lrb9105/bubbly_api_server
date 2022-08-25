@@ -47,6 +47,7 @@ router.get('/selectFollowerList', async function(req,res) {
     let sql = "   select  f.follower_id "
              +"         , ui.nick_name "
              +"         , ui.profile_file_name "
+             +"         , ui.login_id "
              +"     from following f "
              +"     inner join user_info ui on f.follower_id= ui.user_id "
              +"     where f.followee_id = " + req.param("followee_id");
@@ -72,6 +73,7 @@ router.get('/selectFolloweeList', async function(req,res) {
     let sql =        "   select  f.followee_id "
                     +"         , ui.nick_name "
                     +"         , ui.profile_file_name "
+                    +"         , ui.login_id "
                     +"     from following f "
                     +"     inner join user_info ui on f.followee_id= ui.user_id "
                     +"     where f.follower_id = " + req.param("follower_id");

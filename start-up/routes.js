@@ -20,7 +20,7 @@ const mentionRouter = require("../mention/mentionRouter");
 const realtimetrendRouter = require("../realtimetrend/realtimetrendRouter");
 
 // jwt토큰 검증
-const jwtToken = require('../util/jwtToken');
+//const jwtToken = require('../util/jwtToken');
 
 module.exports = function(app) {
   // 경로를 지정하지 않았으므로 모든 요청마다 적용되는 함수이다.!!!!!!!

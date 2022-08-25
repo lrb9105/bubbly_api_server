@@ -121,10 +121,11 @@ router.get('/selectPostUsingPostId', async function(req,res) {
             + "     , case when pl.user_id is not null then 'y' else 'n' end like_yn "
             + "     , share_post_yn "
             + "     , nft_post_yn "
-            + "     , ui.nick_name "
             + "     , profile_file_name "
             + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime "
             + "     , p.mentioned_user_list "
+            + "     , ui.login_id "
+            + "     , p.community_id "
             + " from post p "
             + " inner join user_info ui on p.post_writer_id = ui.user_id "
             + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id "
@@ -161,10 +162,11 @@ router.get('/selectPostUsingPostWriterId', async function(req,res) {
                 + "     , case when pl.user_id is not null then 'y' else 'n' end like_yn "
                 + "     , share_post_yn "
                 + "     , nft_post_yn "
-                + "     , ui.nick_name "
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
+                + "     , p.community_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = " + req.param("post_writer_id") +") pl on p.post_id = pl.post_id " 
@@ -192,7 +194,6 @@ router.get('/selectPostUsingPostContents', async function(req,res) {
     // 데이터베이스에 저장하고 저장된 게시물 id를 가져온다.
     let sql =   "SELECT p.post_id "
                     + "     , p.post_writer_id "
-                    + "     , ui.nick_name "
                     + "     , p.post_contents "
                     + "     , p.file_save_names "
                     + "     , (select COUNT(*) from post_like where post_id = p.post_id) like_count "
@@ -203,12 +204,58 @@ router.get('/selectPostUsingPostContents', async function(req,res) {
                     + "     , profile_file_name "
                     + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                     + "     , p.mentioned_user_list "
+                    + "     , ui.login_id "
+                    + "     , p.community_id "
                     + " from post p "
                     + " inner join user_info ui on p.post_writer_id = ui.user_id "
                     + " left JOIN (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id "
                     + " WHERE post_contents like '%" + req.param("post_contents") + "%'"
                     + " or (p.post_contents like '%" + req.param("post_contents") + "%'" +  " and community_id in (select community_id from participating_community where user_id = "+ req.param("user_id") + "))"
                     + " order by p.cre_datetime_post desc";
+    await maria.query(sql, async function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            let newResult = await parseMentionedUserList(result);
+            console.log(newResult);
+
+            res.send(newResult);
+        }
+    });
+});
+
+// 검색어로 게시물 정보를 조회하고 좋아요 순으로 정렬한다.
+// 일반글 + 내가 속한 커뮤니티글만 나오도록 해야 함(팔로워는 상관없음)
+router.get('/selectPostUsingPostContentsOrderBylike', async function(req,res) {
+    const searchText = req.param("search_text");
+    const userId =  req.param("user_id");
+
+    // 파라미터 정보를 파싱한다.
+    // 데이터베이스에 저장하고 저장된 게시물 id를 가져온다.
+    let sql =   " select * from ( "
+                        + " select p.post_id "
+                        + "     , p.post_writer_id "
+                        + "     , p.post_contents "
+                        + "     , p.file_save_names "
+                        + "     , (select COUNT(*) from post_like where post_id = p.post_id) like_count "
+                        + "     , case when pl.user_id is not null then 'y' else 'n' end like_yn "
+                        + "     , share_post_yn "
+                        + "     , nft_post_yn "
+                        + "     , ui.nick_name "
+                        + "     , profile_file_name "
+                        + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
+                        + "     , p.mentioned_user_list "
+                        + "     , ui.login_id "
+                        + "     , p.community_id "
+                        + " from post p "
+                        + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                        + " left JOIN (SELECT * FROM post_like WHERE user_id = " + userId +") pl on p.post_id = pl.post_id "
+                        + " WHERE post_contents like '%" + searchText + "%'"
+                        + " or (p.post_contents like '%" + searchText + "%'" +  " and community_id in (select community_id from participating_community where user_id = "+ userId + "))"
+                + ") aa"
+                + " order by aa.like_count";
     await maria.query(sql, async function (err, result) {
         if (err) {
             console.log(sql);
@@ -240,6 +287,8 @@ router.get('/selectPostMeAndFolloweeAndCommunity', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
+                + "     , p.community_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left JOIN (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id " 
@@ -278,6 +327,8 @@ router.get('/selectSharedPostUsingPostWriterId', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
+                + "     , p.community_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = " + req.param("post_writer_id") +") pl on p.post_id = pl.post_id " 
@@ -315,6 +366,8 @@ router.get('/selectCommentedPostUsingUserId', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
+                + "     , p.community_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id " 
@@ -351,6 +404,8 @@ router.get('/selectNftPostUsingPostWriterId', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
+                + "     , p.community_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (select * from post_like where user_id = "+ req.param("post_writer_id") +" ) pl on p.post_id = pl.post_id " 
@@ -388,6 +443,8 @@ router.get('/selectLikedPostUsingUserId', async function(req,res) {
                 + "     , profile_file_name "
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
+                + "     , p.community_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " inner join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
@@ -424,6 +481,7 @@ router.get('/selectCommunityPost', async function(req,res) {
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.community_id"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
@@ -461,6 +519,7 @@ router.get('/selectAllCommunityPost', async function(req,res) {
                 + "     , date_format(cre_datetime_post, '%Y-%m-%d %H:%i') cre_datetime"
                 + "     , p.community_id"
                 + "     , p.mentioned_user_list "
+                + "     , ui.login_id "
                 + " from post p "
                 + " inner join user_info ui on p.post_writer_id = ui.user_id "
                 + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
