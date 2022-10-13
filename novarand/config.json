@@ -1,0 +1,10 @@
+{
+    "SmartContractParams" : {
+        "dev_address":"RNSG7YZNE5PXG6CYTGXVL67KKKIV6L3XSQLSF42S7V3TRZBSBJONWLCDAU", 
+        "dev_mnemonic" : "junior flavor forum giant test general saddle dinner must behave screen climb lemon attitude radar jazz pony patrol merry conduct tiny adjust blast above gift",
+        "token" :"1cf738c786759b629dbd74345027ad8968e67238385e98b0188b4485d3c2197d",
+        "ip_address":"http://221.143.186.194",
+        "port":"4162",
+        "token_id" : "9"
+    }
+}

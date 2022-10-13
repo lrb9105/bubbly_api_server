@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<query>
+  <createPost>
+    INSERT INTO post (post_writer_id, post_contents, file_save_names, cre_datetime_post, share_post_yn, community_id, mentioned_user_list, post_type) values (?)
+  </createPost>
+</query>
