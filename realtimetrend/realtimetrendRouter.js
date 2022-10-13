@@ -58,13 +58,19 @@ router.get('/selectRealTimeTrends', async function(req,res) {
     const idx = startTime.indexOf(":");
     const startHour = startTime.substring(idx - 2,idx);
 
+    console.log("Authorization: " + req.get("Authorization"));
+
     // 시작시간
     startTime = startTime.substring(0,idx + 1);
     startTime += "00";
     // 레디스에 저장할 키값
     let redisKey = startTime.replace(" ", "-");
+
+    console.log("redisKey: " + redisKey);
     
     let tDate = new Date(startTime);
+
+    console.log("tDate: " + tDate);
 
     // 한시간 더하기
     tDate.setHours(tDate.getHours() + 1)
@@ -79,139 +85,73 @@ router.get('/selectRealTimeTrends', async function(req,res) {
     // 레디스에 저장할 데이터 만료시간
     var unixEndTimestamp = Math.floor(new Date(endTime + ":00.000").getTime()/1000);
 
+    console.log("unixEndTimestamp: " + unixEndTimestamp);
+
     // 레디스 클라이언트 연결
-    await client.connect();
+    //await client.connect();
 
     // 레디스에 실시간 트렌드 정보 저장되어있는지 확인
     const key = "realtimetrend" + redisKey;
+
+    console.log("key: " + key);
+    console.log("startTime: " + startTime);
+    console.log("endTime: " + endTime);
+
+    // 쿼리문
+    let sql = " select name, sum(cnt) cnt "
+            + " from ( "
+                    + " select hashtag_name name, count(*) cnt "
+                    + " from hashtag "
+                    + " where cre_datetime_hashtag >= ? and cre_datetime_hashtag < ?"
+                    + " group by hashtag_name "
+                    + " union all "
+                    + " select search_text name, count(*) cnt "
+                    + " from search_data_save "
+                    + " where cre_datetime_search >= ? and cre_datetime_search < ? "
+                    + " group by search_text "
+                    + " ) as t1 "
+        + " group by name "
+        + " order by cnt desc "
+        + " limit 10 ";
+
+    const datas = [startTime, endTime, startTime, endTime];
+
+    await maria.query(sql, datas, async function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+
+            // 레디스에 정보 저장 - 종료시간에 만료되도록
+            //resultJson = JSON.stringify(result);
+
+            /*await client.set(key, resultJson,'EXAT',unixEndTimestamp);
+            await client.quit();*/
+
+            console.log("maria에서 조회");
+            res.send(result);
+        }
+    });
+
                  
-    let realTimeTrendInfo = await client.get(key);
+    /*let realTimeTrendInfo = await client.get(key);
+
+    console.log("realTimeTrendInfo: " + realTimeTrendInfo);
 
     // 레디스에 저장되어있는 데이터가 없다면 db에서 조회
     if(realTimeTrendInfo == null) {
-        // 쿼리문
-        let sql = " select name, sum(cnt) cnt "
-                + " from ( "
-                        + " select hashtag_name name, count(*) cnt "
-                        + " from hashtag "
-                        + " where cre_datetime_hashtag >= ? and cre_datetime_hashtag < ? "
-                        + " group by hashtag_name "
-                        + " union all "
-                        + " select search_text name, count(*) cnt "
-                        + " from search_data_save "
-                        + " where cre_datetime_search >= ? and cre_datetime_search < ? "
-                        + " group by search_text "
-                        + " ) as t1 "
-            + " group by name "
-            + " order by cnt desc "
-            + " limit 10 ";
-
-            const datas = [startTime, endTime, startTime, endTime];
-
-            await maria.query(sql, datas, async function (err, result) {
-                if (err) {
-                    console.log(sql);
-                    throw err;
-                } else {
-                    console.log(sql);
-                    console.log(result);
-
-                    // 레디스에 정보 저장 - 종료시간에 만료되도록
-                    resultJson = JSON.stringify(result);
-
-                    await client.set(key, resultJson,'EXAT',unixEndTimestamp);
-                    await client.quit();
-
-                    console.log("maria에서 조회");
-                    res.send(result);
-                }
-            });
+        
     } else {
         await client.quit();
-        
+        console.log("realTimeTrendInfo: " + realTimeTrendInfo);
+
         res.send(JSON.parse(realTimeTrendInfo));
         console.log("redis에서 조회");
-    }
+    }*/
 });
 
-// 사용자 아이디로 댓글 정보를 조회한다.
-router.get('/selectCommentUsingCommentWriterId', async function(req,res) {
-    // 파라미터 정보를 파싱한다.
-    // 데이터베이스에 저장하고 저장된 게시물 id를 가져온다.
-    let sql =        "   select  c.post_id "
-                    +"         , c.comment_writer_id "
-                    +"         , c.comment_depth "
-                    +"         , c.comment_contents "
-                    +"         , ui.nick_name "
-                    +"         , ui.profile_file_name "
-                    + "        , c.mentioned_user_list "
-                    +"  from comment c "
-                    +"  inner join user_info ui on comment_writer_id = ui.user_id "
-                    +"  where c.comment_writer_id = " + req.param("comment_writer_id");
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
-
-            res.send(newResult);
-        }
-    });
-});
-
-// 댓글을 수정한다.
-router.post('/updateComment', async function(req,res) {
-    // 파라미터 정보를 파싱해서 해시맵에 저장한다
-    await parseFormData(req);
-
-    // 멘션(@사용자명 -> 사용자 아이디) 파싱
-    let mentionedUserIdStr = await mention(arr);
-
-    if(mentionedUserIdStr == "") {
-        mentionedUserIdStr = null;
-    }
-    console.log("mentionedUserIdStr: " + mentionedUserIdStr);
-
-    let sqlUpdate = 'update comment SET comment_contents = ?, upd_datetime_comment = ?, mentioned_user_list = ? WHERE comment_id = ?';
-
-    let datas = [hashmap.get("comment_contents"), time.timeToKr(), mentionedUserIdStr, hashmap.get("comment_id")];
-
-    maria.query(sqlUpdate, datas, function (err, result) {
-        if (err) {
-            console.log(sqlUpdate);
-            res.send("fail");
-            throw err;
-        } else {
-            console.log(sqlUpdate);
-            console.log(result);
-            // 성공한 경우
-            res.send("success");
-        }
-    })
-})
-
-// 게시물 정보를 삭제한다.
-router.post('/deleteComment', async function(req,res) {
-    // 파라미터 정보를 파싱해서 해시맵에 저장한다
-    await parseFormData(req);
-
-    // 데이터베이스의 게시물 정보를 삭제한다.
-    let sqlDelete = 'DELETE FROM comment WHERE comment_id = ' + hashmap.get("comment_id");
-    maria.query(sqlDelete, function (err, result) {
-        if (err) {
-            console.log(sqlDelete);
-            res.send("fail");
-            throw err;
-        } else {
-            console.log(sqlDelete);
-            console.log(result);
-            res.send("success");
-        }
-    });
-});
 
 
 /* form 데이터를 파싱한다(텍스트만 있다).
@@ -242,23 +182,3 @@ function parseFormData(req){
         });
     })
   }
-
-  async function parseMentionedUserList(result) {
-    for(let i = 0; i < result.length; i++ ){
-        // ','로 구분된 유저 아이디 문자열
-        let mentionedUserIdlist = result[i].mentioned_user_list
-
-        if(mentionedUserIdlist != null){
-            let arr = mentionedUserIdlist.split(",");
-
-            for(let j = 0; j < arr.length; j++ ){
-                arr[j] = Number(arr[j]);
-            }
-
-            result[i].mentioned_user_list = arr;
-        }
-
-    }
-
-    return result;
-}

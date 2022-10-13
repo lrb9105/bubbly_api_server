@@ -5,6 +5,10 @@ const express = require("express");
 const router = express.Router();
 // s3버킷명
 const BUCKET_NAME = 'bubbly-s3';
+
+const blockChainConfig = require("../backendForSmartContract/config/config.json");
+const tokenId = blockChainConfig.SmartContractParams.token_id;
+
 // aws-sdk를 사용하기 위해 가져 옴
 const AWS = require('aws-sdk');
 // mariaDB를 연결하기 위해 모듈 가져옴
@@ -29,6 +33,9 @@ const config = require('../config/config');
 const s3 = new AWS.S3({accessKeyId: config.s3_accessKeyId, secretAccessKey: config.s3_secretAccessKey});
 // 암호화된 비밀번호를 생성하기 위해
 const blockchain = require('../util/blockchain');
+
+// jwt토큰 검증
+const jwtToken = require('../util/jwtToken');
 
 // 외부에서 사용하기 위해 router를 넣어줌!
 module.exports = router;
@@ -56,7 +63,8 @@ router.get('/testPython', function(req,res){
 });
 
 // 블록체인 계정 , 니모닉 생성 테스트
-router.get('/addrMake',async function(req,res){
+//router.get('/addrMake', jwtToken.verifyAccessToken, async function(req,res){
+router.get('/addrMake', async function(req,res){
     const data = await blockchain.makeBlockchainAddrAndMnemonic();
 
     const account = data.account;
@@ -68,30 +76,19 @@ router.get('/addrMake',async function(req,res){
     res.send(account.addr + "; " + mnemonic);
 });
 
-// 개발사 계정 -> 회원가입한 계정으로 algo 보내기
-router.get('/sendAlgoToAddr',async function(req,res){   
-    const result = await blockchain.sendToAddrByDevAddr("UUGH64MTEPEDYX7RQ7Z7L3XXD4JGB7DY5DP655GO4DP5VL6VRRO4DNSOZY");
+//router.get('/addrMake', jwtToken.verifyAccessToken, async function(req,res){
+router.get('/getPk', async function(req,res){
+        const data = await blockchain.getPk(req.query.mnemonic);
 
-    res.send(result);
-});
+        res.send(data);
+    });
 
-// bubble 받기
-router.get('/transferToken',async function(req,res){   
-    const receiver_mnemonic = req.param("receiver_mnemonic");
-    const result = await blockchain.transferToken("above luxury grocery barely obtain recipe record need card invest gold exclude market huge frozen wheat nation deal same option burst slam section about stone", receiver_mnemonic, 94434081);
-    res.send(result);
-});
 
-// bubble 받기
-router.get('/transferTokenByAccount',async function(req,res){   
-    const receiver_addr = req.param("receiver_addr");
-    const result = await blockchain.transferTokenByAccount("above luxury grocery barely obtain recipe record need card invest gold exclude market huge frozen wheat nation deal same option burst slam section about stone", receiver_addr, 94434081);
-    res.send(result);
-});
+// 개발사 계정 -> 회원가입한 계정으로 Nova 보내기
+router.get('/sendNovaToAddr',async function(req,res){   
+    const addr = req.query.addr;
+    const result = await blockchain.sendToAddrByDevAddr(addr);
 
-// 블록체인 계정 토큰에 옵트인
-router.get('/optin',async function(req,res){
-    const result = await blockchain.tokenOptIn("ginger primary envelope apart vivid lottery secret assume major canoe once manage hundred fragile blue point clutch unable once bitter destroy glue artist above ivory",94434081)   
     res.send(result);
 });
 
@@ -220,6 +217,103 @@ router.post('/createUserInfo', async function(req,res) {
     });
 });
 
+/*************뉴오팀 api********* */
+/* 
+    노바랜드 위에서 새로운 토큰을 생성한다.
+    input: req, res
+    output: 없음
+*/
+router.post('/createToken', async function(req,res) {
+    // 받아온 정보를 해시맵에 저장한다.
+    await parseFormData(req);
+
+    // 토큰을 만들기 위한 정보
+    const mnemonic = hashmap.get("mnemonic");
+    console.log("mnemonic: " + mnemonic);
+    
+    const unitName = hashmap.get("unitName");
+    console.log("unitName: " + unitName);
+
+    const assetName = hashmap.get("assetName");
+    console.log("assetName: " + assetName);
+
+    const amount = Number(hashmap.get("amount"));
+    console.log("amount: " + amount);
+
+    const assetId = await blockchain.createToken(mnemonic, unitName, assetName, amount);
+
+    console.log("assetId111: " + assetId);
+
+    res.send("" + assetId);
+
+});
+
+// 계정 토큰에 옵트인
+router.get('/optin',async function(req,res){
+    const mnemonic = req.query.mnemonic;
+    const token_id = req.query.token_id;
+
+    const result = await blockchain.tokenOptIn(mnemonic,token_id)   
+    res.send(result);
+});
+
+
+// 토큰 전송
+router.get('/transferToken',async function(req,res){   
+    const senderMnemonic = req.query.sender_mnemonic;
+    const receiverAddr = req.query.receiverAddr;
+    const tokenId = req.query.token_id;
+    const amount = Number(req.query.amount);
+
+    const result = await blockchain.transferToken(senderMnemonic, receiverAddr, tokenId, amount);
+    res.send(result);
+});
+
+/* 
+    역할: 사용자 블록체인 계정을 생성하고 특정 토큰을 받아서 옵트인한다.
+    input: user_id
+    output: 니모닉
+*/
+router.post('/createAddrToBlockchainWithToken', async function(req,res) {
+    // 파라미터 정보를 파싱해서 해시맵에 저장한다
+    await parseFormData(req);
+
+    // 사용자 아이디
+    const user_id = hashmap.get("user_id");
+    const token_id = hashmap.get("token_id");
+
+    console.log("createAddrToBlockchain: " + user_id)
+
+    // 사용자 계정과 니모닉을 저장하는 변수
+    let accountAndMnemonic;
+
+    // 1. 새로운 블록체인 계정과 니모닉 생성    
+    blockchain.makeBlockchainAddrAndMnemonic()
+    .then((value) => {
+        // 2. 개발사 계정이 생성된 계정에게 Nova 전송(opt-in을 위한 최소 Nova)
+        accountAndMnemonic = value;
+        blockchain.sendToAddrByDevAddrWithAmount(accountAndMnemonic.account.addr,1000000)
+    }).catch((error) => {console.log(error)})
+    .then(() => {
+        // 3. 생성된 계정 bubble 토큰에 옵트인
+        blockchain.tokenOptIn(accountAndMnemonic.mnemonic,token_id)
+    }).catch((error) => {console.log(error)})
+    .then(() => {
+        res.send({"mnemonic": accountAndMnemonic.mnemonic, "addr": accountAndMnemonic.account.addr});
+    }).catch((error) => {console.log(error)})
+})
+
+// 개발사 계정 -> 회원가입한 계정으로 Nova 보내기
+router.get('/sendNovaToAddrWithAmount',async function(req,res){   
+    const addr = req.query.addr;
+    const amount = Number(req.query.amount);
+
+    const result = await blockchain.sendToAddrByDevAddrWithAmount(addr,amount);
+
+    res.send(result);
+});
+
+/*************뉴오팀 api********* */
 
 /* 
     역할: 사용자 블록체인 계정을 생성하고 옵트인한다.
@@ -247,7 +341,7 @@ router.post('/createAddrToBlockchain', async function(req,res) {
     }).catch((error) => {console.log(error)})
     .then(() => {
         // 3. 생성된 계정 bubble 토큰에 옵트인
-        blockchain.tokenOptIn(accountAndMnemonic.mnemonic,94434081)
+        blockchain.tokenOptIn(accountAndMnemonic.mnemonic,tokenId)
     }).catch((error) => {console.log(error)})
     .then(() => {
         // 4. 데이터베이스에 블록체인 계정 정보를 저장한다.
@@ -257,7 +351,7 @@ router.post('/createAddrToBlockchain', async function(req,res) {
         maria.query(queryStr, datas, function(err, rows, fields){
             if(!err){
                 console.log("성공");
-                res.send(accountAndMnemonic.mnemonic);
+                res.send({"mnemonic": accountAndMnemonic.mnemonic, "addr": accountAndMnemonic.account.addr});
             } else {
                 console.log(err);
                 console.log("실패");
@@ -267,8 +361,10 @@ router.post('/createAddrToBlockchain', async function(req,res) {
     }).catch((error) => {console.log(error)})
 })
 
+
 // user_id로 계정정보 조회
-router.get('/selectAddrUsingUserId',async function(req,res){  
+//router.get('/selectAddrUsingUserId',jwtToken.verifyAccessToken, async function(req,res){  
+router.get('/selectAddrUsingUserId', async function(req,res){  
     const user_id = req.param("user_id");
     
     const queryStr = 'select novaland_account_addr from user_info where user_id = ?';
@@ -293,7 +389,8 @@ router.get('/selectAddrUsingUserId',async function(req,res){
 });
 
 // 계정주소로 계정정보 조회
-router.get('/selectAddrUsingAddr',async function(req,res){  
+//router.get('/selectAddrUsingAddr',jwtToken.verifyAccessToken, async function(req,res){  
+router.get('/selectAddrUsingAddr', async function(req,res){  
     // 사용자 블록체인 정보 조회
     const account_info = await blockchain.selectAccountInfo(req.param("addr"));
 
@@ -301,6 +398,7 @@ router.get('/selectAddrUsingAddr',async function(req,res){
 });
 
 // 사용자 정보를 조회한다.
+//router.get('/selectUserInfo', jwtToken.verifyAccessToken,async function(req,res) {
 router.get('/selectUserInfo', async function(req,res) {
     // 쿼리문
     let sql = "select ui.user_id "
@@ -315,6 +413,8 @@ router.get('/selectUserInfo', async function(req,res) {
             + " from user_info ui"
             + " left join fcm_token ft on ui.user_id = ft.user_id"
             + " where ui.user_id = " +  req.param("user_id");
+
+    console.log("여기");
 
     console.log(sql);
 
@@ -358,6 +458,7 @@ router.get('/selectIsExistingId', async function(req,res) {
 // 사용자가 입력한 검색에에 해당하는 사람들을 조회한다.
 // 10명 제한
 // 내가 팔로우한 사람들, 나를 팔로우한 사람들, 나머지 순서로 정렬
+//router.get('/selectSearchedUserList', jwtToken.verifyAccessToken,async function(req,res) {
 router.get('/selectSearchedUserList', async function(req,res) {
     const userId = req.param("user_id");
     const searchText = req.param("search_text");
@@ -404,7 +505,7 @@ router.get('/selectSearchedUserList', async function(req,res) {
                 + "     , ui.self_info "
                 + "     , ft.token "
                 + " from user_info ui "
-                + " inner join fcm_token ft on ui.user_id = ft.user_id "
+                + " left join fcm_token ft on ui.user_id = ft.user_id "
                 + " where ui.user_id != " + userId +" and (login_id like  '" + searchText +"%' or nick_name like '" + searchText +"%')"
                 + " ) s limit 10";
 
@@ -421,6 +522,7 @@ router.get('/selectSearchedUserList', async function(req,res) {
 });
 
 // 사용자 검색 결과를 조회한다.
+//router.get('/selectUserSearchResultList', jwtToken.verifyAccessToken, async function(req,res) {
 router.get('/selectUserSearchResultList', async function(req,res) {
     const searchText = req.param("search_text");
     const userId = req.param("user_id");
@@ -457,7 +559,6 @@ router.get('/selectUserSearchResultList', async function(req,res) {
                     + "     , ui.nick_name "
                     + "     , ui.self_info "
                     + " from user_info ui "
-                    + " inner join following fo on ui.user_id = fo.followee_id or ui.user_id = fo.follower_id "
                     + " left join fcm_token ft on ui.user_id = ft.user_id "
                     + " where ui.user_id != " + userId +" and (self_info like  '%" + searchText +"%' or nick_name like '%" + searchText +"%')"
                     + " ) s limit 20";
@@ -478,7 +579,8 @@ router.get('/selectUserSearchResultList', async function(req,res) {
 
 
 // 사용자 정보를 수정한다.
-router.post('/updateUserInfo', async function(req,res) {
+//router.post('/updateUserInfo', jwtToken.verifyAccessToken,async function(req,res) {
+router.post('/updateUserInfo',async function(req,res) {
     // 파라미터 정보를 파싱해서 해시맵에 저장하고 파일을 s3에 저장한다.
     // 여러개 저장할 경우 ','로 구분해서 이름을 가져온다!
     // 새로 저장할 파일이 있으면 파일명리스트(,로 구분) 없다면 undefinded
@@ -538,7 +640,99 @@ router.post('/updateUserInfo', async function(req,res) {
     });
 })
 
+// 사용자가 보유한 nft를 조회한다.
+router.get('/selectUserNftList', async function(req,res) {
+    const searchText = req.param("search_text");
+    const userId = req.param("user_id");
+
+    console.log("searchText : " + searchText);
+
+    // 쿼리문
+    let sql = "select * from ( "
+                    + "select  ui.user_id "
+                    + "     , ui.login_id "
+                    + "     , ui.profile_file_name "
+                    + "     , ui.nick_name "
+                    + "     , nft.nft_id "
+                    + "     , nft.holder_id "
+                    + "     , nft.nft_name "
+                    + "     , nft.nft_desc "
+                    + "     , date_format(nft.cre_datetime_nft, '%Y-%m-%d %H:%i') nft_creation_time "
+                    + "     , nft.file_save_url "
+                    + "     , ns.seller_id "
+                    + "     , ns.sell_price "
+                    + "     , ns.app_id "
+                    + "     , ui.novaland_account_addr "
+                    + "     , case when ns.app_id is null then 'n' else 'y' end is_sell "
+                    + " from following f "
+                    + " inner join user_info ui on f.followee_id= ui.user_id "
+                    + " inner join nft nft on ui.user_id = nft.holder_id "
+                    + " left join nft_sell ns on (nft.nft_id = ns.nft_id and ui.user_id = ns.seller_id) "
+                    + " left join fcm_token ft on ui.user_id = ft.user_id "
+                    + " where f.follower_id = " + userId
+                    + " and (self_info like '%" + searchText+ "%' or nick_name like '%" + searchText +"%') "
+                    + " union "
+                    + " select  ui.user_id "
+                    + "     , ui.login_id "
+                    + "     , ui.profile_file_name "
+                    + "     , ui.nick_name "
+                    + "     , nft.nft_id "
+                    + "     , nft.holder_id "
+                    + "     , nft.nft_name "
+                    + "     , nft.nft_desc "
+                    + "     , date_format(nft.cre_datetime_nft, '%Y-%m-%d %H:%i') nft_creation_time "
+                    + "     , nft.file_save_url "
+                    + "     , ns.seller_id "
+                    + "     , ns.sell_price "
+                    + "     , ns.app_id "
+                    + "     , ui.novaland_account_addr "
+                    + "     , case when ns.app_id is null then 'n' else 'y' end is_sell "
+                    + " from following f "
+                    + " inner join user_info ui on f.follower_id= ui.user_id "
+                    + " inner join nft nft on ui.user_id = nft.holder_id "
+                    + " left join nft_sell ns on (nft.nft_id = ns.nft_id and ui.user_id = ns.seller_id) "
+                    + " left join fcm_token ft on ui.user_id = ft.user_id "
+                    + " where f.followee_id = " + userId
+                    + " and (self_info like  '%" + searchText +"%' or nick_name like  '%" + searchText + "%') "
+                    + " union "
+                    + " select ui.user_id "
+                    + "     , ui.login_id "
+                    + "     , ui.profile_file_name "
+                    + "     , ui.nick_name "
+                    + "     , nft.nft_id "
+                    + "     , nft.holder_id "
+                    + "     , nft.nft_name "
+                    + "     , nft.nft_desc "
+                    + "     , date_format(nft.cre_datetime_nft, '%Y-%m-%d %H:%i') nft_creation_time "
+                    + "     , nft.file_save_url "
+                    + "     , ns.seller_id "
+                    + "     , ns.sell_price "
+                    + "     , ns.app_id "
+                    + "     , ui.novaland_account_addr "
+                    + "     , case when ns.app_id is null then 'n' else 'y' end is_sell "
+                    + " from user_info ui "
+                    + " inner join nft nft on ui.user_id = nft.holder_id "
+                    + " left join nft_sell ns on (nft.nft_id = ns.nft_id and ui.user_id = ns.seller_id) "
+                    + " left join fcm_token ft on ui.user_id = ft.user_id "
+                    + " where ui.user_id != " + userId +" and (self_info like  '%" + searchText +"%' or nick_name like '%" + searchText +"%')"
+                    + " ) s";
+
+    console.log(sql);
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+            res.send(result);
+        }
+    });
+});
+
 // 로그인 아이디를 변경한다.
+//router.post('/changeLoginId', jwtToken.verifyAccessToken,async function(req,res) {
 router.post('/changeLoginId', async function(req,res) {
     await parseFormData(req);
     
@@ -567,6 +761,7 @@ router.post('/changeLoginId', async function(req,res) {
 })
 
 /* 사용자 정보를 삭제한다.*/
+//router.post('/deleteUserInfo', jwtToken.verifyAccessToken,async function(req,res) {
 router.post('/deleteUserInfo', async function(req,res) {
     // 파라미터 정보를 파싱해서 해시맵에 저장한다
     await parseFormData(req);
@@ -701,6 +896,7 @@ router.post('/deleteUserInfo', async function(req,res) {
 });
 
 // 사용자 프로필 수정
+//router.post('/updateUserProfile', jwtToken.verifyAccessToken, async function(req,res) {
 router.post('/updateUserProfile', async function(req,res) {
     // 파라미터 정보를 파싱해서 해시맵에 저장하고 파일을 s3에 저장한다.
     // 여러개 저장할 경우 ','로 구분해서 이름을 가져온다!

@@ -41,6 +41,10 @@ router.post('/getList', async function(req,res) {
     res.send(arr);
 });
 
+router.get('/test1', async function(req,res) {
+    res.render("../views/deep_community.php");
+});
+
 // 사용자 아이디로 댓글 정보를 조회한다.
 router.get('/selectCommentUsingCommentWriterId', async function(req,res) {
     // 파라미터 정보를 파싱한다.

@@ -16,6 +16,12 @@ const maria = require('../db/maria');
 const time = require('../util/time');
 const hashtag = require('../hashtag/hashtag');
 const mention = require('../post/mention');
+const connectionPool = require('../db/connectionPool');
+const cron = require('node-cron');
+
+// sql을 처리할 핸들러
+const postSqlHandeler = require('./postSqlHandeler.js');
+
 
 // 외부에서 사용하기 위해 router를 넣어줌!
 module.exports = router;
@@ -29,6 +35,14 @@ let arr;
 
 const tokenPayment = require('../backendForSmartContract/routes/token-payment');
 
+// firebase admin sdk
+const admin = require("firebase-admin");
+const serviceAccountJson = require("../config/fcm_account/serviceAccountKey.json");
+
+// firebase-admin 초기화
+admin.initializeApp({
+    credential : admin.credential.cert(serviceAccountJson)
+  });
 
 // 파이썬 프로그램과 http통신을 하기 위해
 const axios = require("axios");
@@ -49,6 +63,70 @@ router.get('/ipfs', async function(req,res) {
 
 });
 
+router.post('/fcmtest', async function(req, res, next) {
+    broadcastFCMMessage();
+    res.send("success");
+});
+
+var fs = require('fs');
+
+var xml_digester = require("xml-digester");
+var digester = xml_digester.XmlDigester({});
+
+
+// 매일 아침 10시에 게시글을 생성한다.
+// 테스트로 매분의 1초마다 글 작성
+cron.schedule('* * 10 * * *', async function(){
+    // json파일에서 아무 단어나 가져옴
+
+    let str = "아무노래나 그냥 틀어";
+
+    // ai서버에게 데이터 받아 옴
+    str = encodeURI(str);
+
+    await axios.get("http://116.45.9.25:5000/generate/q?s=" + str + "&l=140")
+    .then((response) =>{
+        response = response.data;
+
+        console.log("결과: " + response);
+
+        // 저장할 데이터
+        const postWriter_id = 46;
+        const postContents = response;
+        const postCreTime = time.timeToKr();
+        const sharePostYn = "n";
+        const communityId = 0;
+        const post_type = "0";
+
+        const datas = [postWriter_id, postContents, null, postCreTime, sharePostYn, communityId, null, post_type];
+                
+        // sql쿼리 읽어오기
+        fs.readFile(__dirname + '/postSql.xml','utf8', function(error, data) {
+            if (error) { 
+            console.log(error);
+            } else {
+                digester.digest(data, async function(error, result) {
+                    if (error) {
+                        console.log(error);
+                    } else {
+                        // xml에 저장된 쿼리
+                        const queryStr = result.query.createPost;
+
+                        // sql 실행
+                        const postId = await postSqlHandeler.createPost(queryStr, datas, postWriter_id);
+
+                        // fcm 메시지 전송
+                        await broadcastFCMMessage(datas, postId);
+                    }
+                });
+            }
+        });
+    })
+    .catch((err) => {
+        console.log("Error!!",err);
+    });
+});
+
 /* 
     역할: 게시물 정보를 저장한다.
     input: req, res
@@ -57,7 +135,7 @@ router.get('/ipfs', async function(req,res) {
 router.post('/createPost', async function(req, res, next) {
     // 파라미터 정보를 파싱해서 해시맵에 저장하고 파일을 s3에 저장한다.
     // 여러개 저장할 경우 ','로 구분해서 이름을 가져온다!
-    let saveFileNames = await parseMultiParts(req);
+    const saveFileNames = await parseMultiParts(req);
 
     // 멘션(@사용자명 -> 사용자 아이디) 파싱
     let mentionedUserIdStr = await mention(arr);
@@ -65,45 +143,39 @@ router.post('/createPost', async function(req, res, next) {
     if(mentionedUserIdStr == "") {
         mentionedUserIdStr = null;
     }
-    console.log("mentionedUserIdStr: " + mentionedUserIdStr);
 
-    // 저장한 파일명
-    console.log(saveFileNames);
-    
-    // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-    let queryStr = 'INSERT INTO post (post_writer_id, post_contents, file_save_names, cre_datetime_post, share_post_yn, community_id, mentioned_user_list) VALUES (?)';
-    let datas = [hashmap.get("post_writer_id"), hashmap.get("post_contents"), saveFileNames, time.timeToKr(), hashmap.get("share_post_yn"), hashmap.get("community_id"), mentionedUserIdStr];
-    
-    console.log("현재시간: " + time.timeToKr());
+    // 저장할 데이터
+    const datas = [hashmap.get("post_writer_id"), hashmap.get("post_contents"), saveFileNames, time.timeToKr(), hashmap.get("share_post_yn"), hashmap.get("community_id"), mentionedUserIdStr, hashmap.get("post_type")];
+              
+    // sql쿼리 읽어오기
+    await fs.readFile(__dirname + '/postSql.xml','utf8', function(error, data) {
+        if (error) { 
+          console.log(error);
+        } else {
+          digester.digest(data, async function(error, result) {
+            if (error) {
+              console.log(error);
+            } else {
+              // xml에 저장된 쿼리
+              const queryStr = result.query.createPost;
 
-    // 저장!
-    await maria.query(queryStr, [datas], async function(err, rows, fields){
-        if(!err) {
-            console.log("성공");
-            // post_id를 가져온다.
-            // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-            let queryStr = 'select max(post_id) post_id from post where post_writer_id = ?';
-            let datas = [hashmap.get("post_writer_id")];
-            
-            // 저장!
-            await maria.query(queryStr, [datas], function(err, rows, fields){
-                if(!err){
-                    console.log("성공");
-                    // 해시태그 객체에게 게시물 아이디와 내용을 넘겨준다.
-                    res.locals.postContents = hashmap.get("post_contents");
-                    res.locals.postId = rows[0].post_id;
-                    res.locals.gubun = 0;
-                    next();
-                } else {
-                    console.log(err);
-                    console.log("실패");
-                    res.send("fail");
-                }
-            }); 
-        }else {
-            console.log(err);
-            console.log("실패");
-            res.send("fail");
+              // sql 실행
+              const postId = await postSqlHandeler.createPost(queryStr, datas, hashmap.get("post_writer_id"));
+
+              // fcm 메시지 전송
+              await broadcastFCMMessage(datas, postId);
+
+              // 해시태그 객체에게 게시물 아이디와 내용을 넘겨준다.
+              res.locals.postContents = hashmap.get("post_contents");
+              res.locals.postId = postId;
+              res.locals.gubun = 0;
+
+              // 해시태그 저장
+              next();
+
+            return;
+            }
+          });
         }
     });
 }, hashtag);
@@ -126,26 +198,48 @@ router.get('/selectPostUsingPostId', async function(req,res) {
             + "     , p.mentioned_user_list "
             + "     , ui.login_id "
             + "     , p.community_id "
+            + "     , p.post_type "
             + " from post p "
-            + " inner join user_info ui on p.post_writer_id = ui.user_id "
+            + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
             + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id "
             + " WHERE p.post_id = " + req.param("post_id")
             + " order by p.cre_datetime_post desc";
 
-    console.log(sql);
+    
+    const dbPool = await connectionPool.getPool();
 
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
 
-            res.send(newResult);
-        }
-    });
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 사용자id로 게시물 정보를 조회한다.
@@ -167,24 +261,47 @@ router.get('/selectPostUsingPostWriterId', async function(req,res) {
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
                 + "     , p.community_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left join (select * from post_like where user_id = " + req.param("post_writer_id") +") pl on p.post_id = pl.post_id " 
                 + " where post_writer_id = " + req.param("post_writer_id")
                 + " order by p.cre_datetime_post desc";
 
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 검색어로 게시물 정보를 조회한다.
@@ -206,24 +323,48 @@ router.get('/selectPostUsingPostContents', async function(req,res) {
                     + "     , p.mentioned_user_list "
                     + "     , ui.login_id "
                     + "     , p.community_id "
+                    + "     , p.post_type "
                     + " from post p "
-                    + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                    + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                     + " left JOIN (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id "
                     + " WHERE post_contents like '%" + req.param("post_contents") + "%'"
                     + " or (p.post_contents like '%" + req.param("post_contents") + "%'" +  " and community_id in (select community_id from participating_community where user_id = "+ req.param("user_id") + "))"
                     + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 검색어로 게시물 정보를 조회하고 좋아요 순으로 정렬한다.
@@ -249,25 +390,48 @@ router.get('/selectPostUsingPostContentsOrderBylike', async function(req,res) {
                         + "     , p.mentioned_user_list "
                         + "     , ui.login_id "
                         + "     , p.community_id "
+                        + "     , p.post_type "
                         + " from post p "
-                        + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                        + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                         + " left JOIN (SELECT * FROM post_like WHERE user_id = " + userId +") pl on p.post_id = pl.post_id "
                         + " WHERE post_contents like '%" + searchText + "%'"
                         + " or (p.post_contents like '%" + searchText + "%'" +  " and community_id in (select community_id from participating_community where user_id = "+ userId + "))"
                 + ") aa"
                 + " order by aa.like_count";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 나와 팔로위, 커뮤니티의 게시물을 조회한다(홈 타임라인)
@@ -289,25 +453,49 @@ router.get('/selectPostMeAndFolloweeAndCommunity', async function(req,res) {
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
                 + "     , p.community_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left JOIN (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") +") pl on p.post_id = pl.post_id " 
                 + " WHERE post_writer_id = " + req.param("user_id") + " and community_id = 0 "
                 + " or (post_writer_id in (select followee_id from following where follower_id =" + req.param("user_id") + ") and community_id = 0)"
                 + " or (community_id in (select community_id from participating_community where user_id = "+ req.param("user_id") + "))"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 공유한 게시물만 조회한다.
@@ -329,24 +517,48 @@ router.get('/selectSharedPostUsingPostWriterId', async function(req,res) {
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
                 + "     , p.community_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left join (select * from post_like where user_id = " + req.param("post_writer_id") +") pl on p.post_id = pl.post_id " 
                 + " where post_writer_id = " + req.param("post_writer_id")
                 + " and p.share_post_yn = 'y'"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 댓글단 모든 게시물 조회한다.
@@ -368,23 +580,46 @@ router.get('/selectCommentedPostUsingUserId', async function(req,res) {
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
                 + "     , p.community_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left join (select * from post_like where user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id " 
                 + " inner join (select distinct post_id from comment where comment_writer_id =" +  req.param("user_id") + ") pi on p.post_id = pi.post_id "
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 내가 작성한 게시물 중 nft화한 게시물만 조회한다.
@@ -406,24 +641,48 @@ router.get('/selectNftPostUsingPostWriterId', async function(req,res) {
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
                 + "     , p.community_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left join (select * from post_like where user_id = "+ req.param("post_writer_id") +" ) pl on p.post_id = pl.post_id " 
                 + " where post_writer_id = " + req.param("post_writer_id")
                 + " and p.nft_post_yn  = 'y'"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
 
-            res.send(newResult);
-        }
-    });
+    const dbPool = await connectionPool.getPool();
+
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 좋아요한 게시물 정보를 조회한다.
@@ -445,22 +704,46 @@ router.get('/selectLikedPostUsingUserId', async function(req,res) {
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
                 + "     , p.community_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " inner join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 특정 커뮤니티의 모든 게시글 조회
@@ -482,23 +765,47 @@ router.get('/selectCommunityPost', async function(req,res) {
                 + "     , p.community_id"
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
                 + " where community_id = " + req.param("community_id")
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 내가 속한 모든 커뮤니티의 게시글 조회
@@ -520,23 +827,47 @@ router.get('/selectAllCommunityPost', async function(req,res) {
                 + "     , p.community_id"
                 + "     , p.mentioned_user_list "
                 + "     , ui.login_id "
+                + "     , p.post_type "
                 + " from post p "
-                + " inner join user_info ui on p.post_writer_id = ui.user_id "
+                + " inner join user_info ui on p.post_writer_id = ui.user_id and p.post_writer_id not in (select user_id from user_info where stop_yn = 'y')"
                 + " left join (SELECT * FROM post_like WHERE user_id = " + req.param("user_id") + ") pl on p.post_id = pl.post_id "
                 + " where community_id in (select community_id from participating_community where user_id = " + req.param("user_id") + ")"
                 + " order by p.cre_datetime_post desc";
-    await maria.query(sql, async function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            let newResult = await parseMentionedUserList(result);
-            console.log(newResult);
+    
+    const dbPool = await connectionPool.getPool();
 
-            res.send(newResult);
-        }
-    });
+    try{
+        dbPool.getConnection(async (err, conn) => {
+            // 에러 발생 시
+            if (err) {
+                // 커넥션이 연결되어 있다면
+                if (conn) {
+                    conn.release();
+                }
+                return reject(err);
+            } else {
+                // 내부 콜백에서 쿼리를 수행
+                await conn.query(sql, async function (err, rows, fields) {
+                    // 커넥션 반납
+                    conn.release();
+
+                    if (err) {
+                        res.send(err);
+                        throw err;
+                    } else {                        
+                        let newResult = await parseMentionedUserList(rows);
+                        console.log(newResult);
+            
+                        res.send(newResult);
+                    }
+                })
+            }
+        })
+    } catch (err) {
+        console.log(err);
+        res.send(err);
+        return;
+    }
 });
 
 // 게시물 정보를 수정한다.
@@ -552,15 +883,13 @@ router.post('/updatePost', async function(req,res, next) {
     if(mentionedUserIdStr == "") {
         mentionedUserIdStr = null;
     }
-    console.log("mentionedUserIdStr: " + mentionedUserIdStr);
     
     // 해당 게시물 id의 기존 파일저장 경로를 가져온다.
     //let sql = 'SELECT file_save_names FROM post WHERE post_id = ' + hashmap.get("post_id");
     let sql = 'SELECT file_save_names FROM post WHERE post_id = ' + Number(hashmap.get("post_id"));
 
     await maria.query(sql, function (err, result, fields) {
-        if (err) {
-            console.log(sql);
+        if (err) {f
             console.log(2222);
             throw err;
         } else {
@@ -576,9 +905,9 @@ router.post('/updatePost', async function(req,res, next) {
                 s3delete(file_save_names);
             }
 
-            let sqlUpdate = 'UPDATE post SET post_contents = ?, file_save_names = ?, upd_datetime_post = ?, mentioned_user_list =? WHERE post_id = ?';
+            let sqlUpdate = 'UPDATE post SET post_contents = ?, file_save_names = ?, upd_datetime_post = ?, mentioned_user_list =?, post_type = ? WHERE post_id = ?';
             // undefined를 넣어도 null로 넣어짐!
-            let datas = [hashmap.get("post_contents"), saveFileNames, time.timeToKr(), mentionedUserIdStr, hashmap.get("post_id")];
+            let datas = [hashmap.get("post_contents"), saveFileNames, time.timeToKr(), mentionedUserIdStr, hashmap.get("post_type"), hashmap.get("post_id")];
 
             console.log("22")
             maria.query(sqlUpdate, datas, function (err, result) {
@@ -618,7 +947,7 @@ router.post('/deletePost', async function(req,res) {
     
     await maria.query(sql, function (err, result, fields) {
         if (err) {
-            console.log(sql);
+            
             console.log(2222);
             throw err;
         } else {
@@ -719,7 +1048,7 @@ router.post('/dislike', async function(req,res) {
     let datas = [hashmap.get("post_id"), hashmap.get("user_id")];
     maria.query(sqlDelete, datas, function (err, result) {
         if (err) {
-            console.log(sql);
+            
             res.send("fail");
             throw err;
         } else {
@@ -743,98 +1072,6 @@ router.post('/dislike', async function(req,res) {
         }
     });
 });
-
-router.post('/test', async function(req,res) {
-    // 각파일의 정보를 담은 배열을 저장할 맵
-    let files = new HashMap();
-    // 파일의 정보를 저장할 배열
-    let fileInfo;
-    // 파일 청크 데이터를 저장
-    let chunks;
-
-    // 파일 정보를 읽어와서 배열에 저장한다.
-    req.busboy.on('file', (name, file, info) => { //파일정보를 읽어온다.
-        const { filename, encoding, mimeType } = info;
-        
-        // 확장자(jpeg, png 등)
-        var filetype = mimeType.split("/")[1];
-        console.log("filetype: " + filetype);
-
-        filetempName = `${random()}.${filetype}`; //랜덤하게 파일명 생성
-        // mime타입(image/jpeg 등)
-        ftype = mimeType;
-        console.log("ftype: " + ftype);
-        console.log(`File [${name}]: filename: %j, encoding: %j, mimeType: %j`,filename, encoding, mimeType);
-
-        file.on('data', function(data) {
-            chunks = [];
-            // you will get chunks here will pull all chunk to an array and later concat it.
-            chunks.push(data)
-        });
-
-        file.on('end', function(data) {
-            // 각 파일의 정보를 저장할 배열
-            fileInfo = [];
-            //랜덤하게 파일명 생성
-            filetempName = `${random()}.${filetype}`;
-            // 랜덤한 파일명 저장
-            fileInfo[0] = filetempName;
-            // 각 파일의 타입 저장
-            fileInfo[1] = mimeType;
-            // 각 파일의 청크 배열 저장
-            fileInfo[2] = chunks;
-            
-            // you will get chunks here will pull all chunk to an array and later concat it.
-            files.set(filename, fileInfo);
-        });
-
-    });
-
-    req.busboy.on('finish', function() {
-        const size = files.size;
-        let count = 1;
-        let fileNames = "";
-        
-        files.forEach(function (value, key, map) {
-            // 저장한 파일명 ','로 구분해서 저장
-            fileNames += value[0] + ",";
-            if(count == size) {
-                fileNames = fileNames.substring(0,fileNames.length - 1);
-            }
-
-            console.log(fileNames);
-            
-            /*const params = {
-                Bucket: BUCKET_NAME,
-                Key: value[0], 
-                Body: Buffer.concat(value[2]), // concatinating all chunks
-                ContentType: value[1] // required
-            }
-
-            s3.upload(params, (err, data) => {
-                if (err){ //애러가 발생하면 무조건 리턴
-                    return resolve(err);
-                } else {
-                    // 마지막이라면 리턴
-                    console.log(count);
-                    console.log(value[0]);
-                    if(count == size){
-                        return resolve("111");
-                    } else {
-                        count++;
-                    }
-                }
-            });*/
-
-            count++;
-          });
-
-        console.log("파일 있음");
-        res.send();
-    });
-
-    req.pipe(req.busboy);
-})
 
 
 /* multipart 데이터를 파싱하고 정적파일이 있다면 s3로 업로드 한다.
@@ -1067,3 +1304,141 @@ async function parseMentionedUserList(result) {
 
     return result;
 }
+
+// fcm 메시지 전송
+async function broadcastFCMMessage(datas, postId){
+    // 속성값 조회
+    const postWriterId = datas[0];
+    const postContents = datas[1];
+    let saveFileNames = datas[2];
+    const creDatetimePost = datas[3];
+    const sharePostYn = datas[4];
+    const communityId = datas[5];
+    let mentionedUserIdStr = datas[6];
+    const postType = datas[7];
+
+    // 저장하는 파일이 없다면 null이 들어가도록!!
+    if(saveFileNames == undefined || saveFileNames == null) {
+        saveFileNames = "null";
+
+        console.log("11");
+    }else {
+        console.log("22");
+    }
+
+    if(mentionedUserIdStr == undefined || mentionedUserIdStr == null) {
+        mentionedUserIdStr = "null";
+
+        console.log("11");
+    }else {
+        console.log("22");
+    }
+
+    console.log(postWriterId);
+    console.log(postContents);
+    console.log(saveFileNames);
+    console.log(creDatetimePost);
+    console.log(sharePostYn);
+    console.log(communityId);
+    console.log(mentionedUserIdStr);
+    console.log(postType);
+    console.log(postId);
+
+    // 게시물 작성자를 팔로잉하고 있는 모든 사용자리스트 조회
+    let sql = ' select ft.token '
+            + ' from following f '
+            + ' inner join fcm_token ft on f.follower_id = ft.user_id '
+            + ' where followee_id = ' + postWriterId;
+
+    await maria.query(sql, async function (err, rows) {
+        if (err) {
+            console.log(err);
+            res.send("fail");
+            throw err;
+        } else {
+            console.log("rows.length: " + rows.length);
+
+            let registrationTokens = [];
+    
+            // 알림을 보낼 토큰 리스트 생성
+            for(let i = 0; i < rows.length; i++) {
+                registrationTokens.push(rows[i].token);
+            } 
+
+            console.log("registrationTokens.length: " + registrationTokens.length);
+
+            if(registrationTokens.length > 0) {
+                // 사용자 정보 조회 쿼리
+                let queryStr = "select ui.user_id "
+                + "     , ui.login_id "
+                + "     , ui.email_addr "
+                + "     , ui.phone_num "
+                + "     , ui.novaland_account_addr "
+                + "     , ui.profile_file_name "
+                + "     , ui.nick_name "
+                + "     , ui.self_info "
+                + " from user_info ui"
+                + " where ui.user_id = " +  postWriterId;
+
+                // 사용자 정보 조회
+                await maria.query(queryStr, function(err, rows){
+                    if(!err){
+                        console.log("성공");
+
+                        // 4. 메시지 생성
+                        const message = {
+                            notification: {
+                                title: '새로운 게시물',
+                                body: rows[0].nick_name + "님이 새로운 게시물을 작성했습니다."
+                            },
+                            data : {
+                                postWriterId: "" + postWriterId,
+                                postContents: postContents,
+                                saveFileNames: saveFileNames,
+                                creDatetimePost: "" + creDatetimePost,
+                                sharePostYn: sharePostYn,
+                                communityId: "" + communityId,
+                                mentionedUserIdStr: mentionedUserIdStr,
+                                postType: "" + postType,
+                                postId: "" + postId
+                            },
+                            android: {
+                            priority: "high",
+                            notification: {
+                                icon: "skeleton",
+                                //imageUrl: profileImageURL,
+                                click_action: 'FCM_NOTI_ACTIVITY'
+                            }
+                            },
+                            tokens: registrationTokens,
+                        };
+
+                        // 5. 메시지 전송
+                        // 한번에 최대 500대까지 전송가능
+                        console.log("admin: " + admin);
+
+                        admin.messaging().sendMulticast(message)
+                        .then((response) => {
+                            if (response.failureCount > 0) {
+                            const failedTokens = [];
+                            response.responses.forEach((resp, idx) => {
+                                if (!resp.success) {
+                                failedTokens.push(registrationTokens[idx]);
+                                }
+                            });
+                            console.log('List of tokens that caused failures: ' + failedTokens);
+                            }
+                        }).catch((error) => {
+                            console.log('Error sending message:', error);
+                        });
+                    } else {
+                        console.log(err);
+                        console.log("실패");
+                        res.send("fail");
+                    }
+                }); 
+            }
+        }
+    });
+}
+  

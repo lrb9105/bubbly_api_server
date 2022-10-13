@@ -29,14 +29,11 @@ router.get('/selectUserListForMention', async function(req,res) {
                 + " ) f on ui.user_id = f.search_id "
                 + " where nick_name like " + searchName;
     
-    console.log(sql);
-
     await maria.query(sql, function (err, result) {
         if (err) {
-            console.log(sql);
+            console.log(err);
             throw err;
         } else {
-            console.log(sql);
             console.log(result);
             res.send(result);
         }

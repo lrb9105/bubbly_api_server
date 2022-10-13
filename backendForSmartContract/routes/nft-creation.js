@@ -12,13 +12,13 @@ router.post('/', async function(req,res) {
     
     var nft_creation = require("../nft-market/nft-create");
     var resolve = await nft_creation.main(req, res);
-    console.log(resolve.data);
+    //console.log(resolve.data);
     //resolve.data결과 아래와 같음.
     // {nft_id: 96821233,
     //     result: 'success',
     //     txn_id: '73JIMBCFP6AMJ7CPEFALPX67YRK3JCPGR45PTVP3K3VQMLLJ6G3A'}
     //추가로 RDB에 저장하는 작업 등 수행
-    res.send("success");
+    res.send(resolve);
 });
 
 // algosdk 테스트

@@ -54,6 +54,7 @@ function main(req, res) {
     if(isBalanceMoreThanMin){
       //파일명과 이미지명을 변수로 ipfs 저장 http post요청 함수
       var prom = storeMetaData(imageName,filetempname); 
+      
       prom.then(async(res)=>{
         //비동기 방식으로 임시 이미지 파일 삭제
         var removeFrom = path.join(`${__dirname}/img`, filetempname);
@@ -103,8 +104,7 @@ function main(req, res) {
         const nft_id = result.data["nft_id"];
 
         // 이미지 저장경로를 가져온다.
-        let metadataUrl = await metadata_url.replace("ipfs://","https://ipfs.io/ipfs/");
-        let fileSaveUrl;
+        let fileSaveUrl = await metadata_url.replace("ipfs://","https://ipfs.io/ipfs/");
 
         await axios.get(metadataUrl)
         .then(async (response) =>{
@@ -149,7 +149,42 @@ function main(req, res) {
             console.log("Error!!",err);
         });
 
-      return resolve(result);
+        /*
+        console.log(fileSaveUrl);
+        console.log("생성한 nft 블록체인에 저장");
+
+        // db에 저장
+        // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
+        let queryStr = 'insert into nft (nft_id, holder_id, nft_name, nft_desc, cre_datetime_nft, file_save_url) values (?)';
+        let datas = [nft_id, user_id, assetName, description, time.timeToKr(), fileSaveUrl];
+        
+        // 저장!
+        await maria.query(queryStr, [datas], async function(err, rows, fields){
+          if(!err){
+              console.log("생성한 nft db에 저장");
+
+              // 해당 nft가 포함된 게시물 nft_yn "y"로 업데이트 
+              let queryStr = "update post set nft_post_yn = 'y', nft_id = ? where post_id = ?";
+              let datas = [nft_id, post_id];
+              
+              await maria.query(queryStr, datas, function(err, rows, fields){
+                  if(!err){
+                      console.log("성공");
+                      console.log("nft로 생성한 게시물 nft_yn값 변경");
+
+                      return resolve("success");
+                  } else {
+                      console.log("실패");
+                      console.log(err);
+                      return resolve("fail");
+                  }
+              });
+          } else {
+              console.log("실패");
+              console.log(err);
+              return resolve("fail");
+          }
+        });*/
       });
     }else{
       result = "계정 잔고가 NFT optin하기 위한 최소 nova 금액 미만입니다.";
@@ -252,8 +287,8 @@ function requestCreateNFT(devAddress, devMnemonic, nftOwnerAddress, nftOwnerMnem
             asset_name: assetName,
             nft_url: nftURL,
             token: nodeToken,
-            //ip_address: ipAddress+':'+port - 로컬노드로 변경 시 이렇게 사용하기
-            ip_address: ipAddress
+            ip_address: ipAddress+':'+port
+            //ip_address: ipAddress
         }})  
         .then(function (response) {
           console.log("response: " + response);

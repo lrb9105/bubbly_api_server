@@ -48,71 +48,100 @@ router.post('/login', async function(req,res) {
     const password = hashmap.get("password");
 
     // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-    let queryStr = 'select login_pw, salt, user_id, nick_name from user_info where login_id = ?';
+    let queryStr = 'select login_pw, salt, user_id, nick_name, stop_yn from user_info where login_id = ?';
     let datas = [login_id];
     
     // 저장!
     await maria.query(queryStr, datas, async function(err, rows, fields){
         if(!err){
-            // db에서 가져온 login_id
-            const login_pw = rows[0].login_pw;
-            const user_id = rows[0].user_id;
+            if(rows[0] == null || rows[0] == undefined) {
+                res.send("fail");
+                return;
+            } else {
+                // db에서 가져온 login_id
+                const login_pw = rows[0].login_pw;
+                const user_id = rows[0].user_id;
+
+                console.log("user_id: " + user_id);
+                
+                console.log("login_pw: " + login_pw);
+                // id가 존재하지 않는다면
+                if(login_pw == null) {
+                    res.send("fail");    
+                    return;
+                } else { // id가 존재한다면 비밀번호 체크
+                    const salt = rows[0].salt;
+                    const result = passwordCrypto.verifyPassword(password, salt, login_pw);
+                    
+                    // 일치하는 비밀번호가 있다면 토큰 생성
+                    result.then(async (value) => {
+                        
+                        if(value == "success"){
+                            const stopYn =  rows[0].stop_yn;
+
+                            console.log("stopYn: " + stopYn);
             
-            console.log("login_pw: " + login_pw);
-            // id가 존재하지 않는다면
-            if(login_pw == null) {
-                res.send("not exist");    
-            } else { // id가 존재한다면 비밀번호 체크
-                const salt = rows[0].salt;
-                const result = passwordCrypto.verifyPassword(password, salt, login_pw);
-                
-                // 일치하는 비밀번호가 있다면 토큰 생성
-                result.then(async (value) => {
+                            if(stopYn == 'y') {
+                                res.send("stop");
+                                return;
+                            }
+                            
+                            const user_id = rows[0].user_id;
+
+                            // redis과 연결
+                            await client.connect();
+                            const key = "refreshToken" + user_id;
+
+                            // refresh 토큰 조회
+                            let refreshToken = await client.get(key);
+
+                            // 만료시간 확인
+                            const ttl = await client.ttl(key);
+                            console.log("리프레시토큰 ttl: " + ttl);
+
+                            // 토큰이 없거나 토큰 만료시간이 하루보다 짧다면
+                            if(refreshToken == null || ttl/60/60 < 24) {
+                                // 새로운 refreshToken 토큰 생성
+                                refreshToken = await jwt.sign({user_id},
+                                    config.jwt_secretKey, {
+                                    expiresIn: '14d',
+                                    issuer: 'bubbly'
+                                });
+
+                                // 레디스에 저장
+                                await client.set(key, refreshToken);
+
+                                // 14일 후에 자동삭제
+                                await client.expire(key, 60 * 60 * 24 * 14);
+                            }
+
+                            const decoded = jwt.decode(refreshToken,config.jwt_secretKey);
+                            const userid = decoded["user_id"];
+
+                            console.log("userid: " + userid);
                     
-                    if(value == "success"){
-                        const user_id = rows[0].user_id;
-                        const nick_name = rows[0].nick_name;
+                            await client.quit();
 
-                        // 1. refreshToken 토큰 생성
-                        const refreshToken = await jwt.sign({},
-                            config.jwt_secretKey, {
-                            expiresIn: '14d',
-                            issuer: 'bubbly'
-                        });
+                            // 3. accessToken 생성
+                            // 토큰 세팅
+                            const accessToken = await jwt.sign({ user_id},
+                                config.jwt_secretKey, {
+                                expiresIn: '1h',
+                                issuer: 'bubbly'
+                            });
 
-                        // 2. redis에 refreshToken 저장
-                        await client.connect();
-                        const key = "refreshToken" + user_id;
-                
-                        await client.set(key, refreshToken);
-                    
-                        //const savedToken = await client.get(key);
-                        //console.log("refreshToken: " + savedToken);
-                
-                        // 14일 후에 자동삭제
-                        await client.expire(key, 60 * 60 * 24 * 14);
-                
-                        await client.quit();
+                            const token = {"accessToken" : accessToken, "refreshToken" : refreshToken, "userId" : user_id};
 
-                        // 3. accessToken 생성
-                        // 토큰 세팅
-                        const accessToken = await jwt.sign({ user_id, nick_name },
-                            config.jwt_secretKey, {
-                            expiresIn: '1h',
-                            issuer: 'bubbly'
-                        });
-
-                        const token = {"accessToken" : accessToken, "refreshToken" : refreshToken, "userId" : user_id};
-
-                        res.send(JSON.stringify(token));
-                    } else {
+                            res.send(JSON.stringify(token));
+                        } else {
+                            res.send("fail");
+                        }
+                    }).catch((error) => {
+                        console.log(error);
                         res.send("fail");
-                    }
-                }).catch((error) => {
-                    console.log(error);
-                    res.send("fail");
-                    throw error;
-                });
+                        throw error;
+                    });
+                }
             }
         } else {
             console.log(err);
@@ -120,6 +149,28 @@ router.post('/login', async function(req,res) {
         }
     });
 })
+
+router.get('/accesstoken', async function(req,res, next) {
+    let user_id = 1;
+
+    const accessToken = await jwt.sign({user_id},
+        config.jwt_secretKey, {
+        expiresIn: '1s',
+        issuer: 'bubbly'
+    });
+    res.send(accessToken);
+});
+
+// 액세스토큰 재발행
+router.get('/reIssueAccessToken', async function(req,res, next) {
+    console.log("안들어오냐??");
+
+    const refreshTokenFromUser = req.query.token;
+
+    console.log("refreshTokenFromUser: " + refreshTokenFromUser);
+
+    jwtToken.reIssueAccessToken(refreshTokenFromUser, res);
+});
 
 // 로그아웃
 router.post('/logout', async function(req,res, next) {
@@ -171,75 +222,7 @@ router.get('/logout', async function(req,res) {
     });
 });
 
-// 사용자 아이디로 댓글 정보를 조회한다.
-router.get('/selectCommentUsingCommentWriterId', async function(req,res) {
-    // 파라미터 정보를 파싱한다.
-    // 데이터베이스에 저장하고 저장된 게시물 id를 가져온다.
-    let sql =        "   select  c.post_id "
-                    +"         , c.comment_writer_id "
-                    +"         , c.comment_depth "
-                    +"         , c.comment_contents "
-                    +"         , c.cre_datetime_comment "
-                    +"         , c.upd_datetime_comment "
-                    +"         , ui.nick_name "
-                    +"         , ui.profile_file_name "
-                    +"  from comment c "
-                    +"  inner join user_info ui on comment_writer_id = ui.user_id "
-                    +"  where c.comment_writer_id = " + req.param("comment_writer_id");
-    await maria.query(sql, function (err, result) {
-        if (err) {
-            console.log(sql);
-            throw err;
-        } else {
-            console.log(sql);
-            console.log(result);
-            res.send(result);
-        }
-    });
-});
 
-// 댓글을 수정한다.
-router.post('/updateComment', async function(req,res) {
-    // 파라미터 정보를 파싱해서 해시맵에 저장한다
-    await parseFormData(req);
-    
-    let sqlUpdate = 'update comment SET comment_contents = ?, upd_datetime_comment = ? WHERE comment_id = ?';
-            
-    let datas = [hashmap.get("comment_contents"), time.timeToKr(), hashmap.get("comment_id")];
-
-    maria.query(sqlUpdate, datas, function (err, result) {
-        if (err) {
-            console.log(sqlUpdate);
-            res.send("fail");
-            throw err;
-        } else {
-            console.log(sqlUpdate);
-            console.log(result);
-            // 성공한 경우 
-            res.send("success");
-        }
-    })
-})
-
-// 게시물 정보를 삭제한다.
-router.post('/deleteComment', async function(req,res) {
-    // 파라미터 정보를 파싱해서 해시맵에 저장한다
-    await parseFormData(req);
-
-    // 데이터베이스의 게시물 정보를 삭제한다.
-    let sqlDelete = 'DELETE FROM comment WHERE comment_id = ' + hashmap.get("comment_id");
-    maria.query(sqlDelete, function (err, result) {
-        if (err) {
-            console.log(sqlDelete);
-            res.send("fail");
-            throw err;
-        } else {
-            console.log(sqlDelete);
-            console.log(result);
-            res.send("success");
-        }
-    });
-});
 
 
 /* form 데이터를 파싱한다(텍스트만 있다).

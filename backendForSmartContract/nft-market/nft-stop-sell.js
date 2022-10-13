@@ -11,11 +11,23 @@ let mnemonic, nftID, appID, sellPrice;
 
 function main(req) {
   return new Promise(async(resolve)=>{
-    await parseMultiParts(req); 
+    /*await parseMultiParts(req); 
     mnemonic = arr[0];
     nftID = arr[1];
     appID = arr[2];
     sellPrice = arr[3];
+    */
+
+    mnemonic = req.body.mnemonic;
+    nftID = req.body.nft_id;
+    appID = req.body.app_id;
+    sellPrice = req.body.sell_price;
+
+    console.log("mnemonic: " + mnemonic);
+    console.log("nftID: " + nftID);
+    console.log("appID: " + appID);
+    console.log("sellPrice: " + sellPrice);
+
     var account = await getAccount(mnemonic);
     let devAddress, devMnemonic, nftOwnerAddress, token_id, nodeToken, ipAddress, port;
     var configJson = await config.getConfigJson();
@@ -49,11 +61,17 @@ function main(req) {
 }
 
 function parseMultiParts(req){
+  arr = [];
+  console.log("parseMultiParts 들어옴!");
   return new Promise( (resolve)=>{
-  req.pipe(req.busboy);
-  req.busboy.on('field',(name, value, info) => {
-        console.log(`Field [${name}]: value: %j`, value);
-        arr.push(value);
+    let i = 1;
+    console.log("parseMultiParts return 들어옴!");
+     req.pipe(req.busboy);
+     req.busboy.on('field', (name, value, info) => {
+            console.log(i);
+            console.log(`Field [${name}]: value: %j`, value);
+            arr.push(value);
+            console.log(i++);
     });
     return resolve();
 })
@@ -79,8 +97,8 @@ function requestStopSellNFT(devAddress, devMnemonic, nftOwnerAddress, nftID, app
         sell_price: sellPrice,
         token_id: tokenID,
         token: nodeToken,
-        //ip_address: ipAddress+':'+port
-        ip_address: ipAddress
+        ip_address: ipAddress+':'+port
+        //ip_address: ipAddress
     }})  
     .then(function (response) {
         return response;

@@ -125,6 +125,45 @@ router.get('/selectCommunitySearchResultList', async function(req,res) {
     });
 });
 
+// 특정 커뮤니티의 참여자의 nft리스트를 조회한다.
+router.get('/selectCommunityParticipantNftList', async function(req,res) {
+    // 쿼리문
+    let sql = "select pc.community_id "
+            + "     , ui.user_id "
+            + "     , ui.login_id "
+            + "     , ui.nick_name "
+            + "     , ui.profile_file_name "
+            + "     , nft.nft_id "
+            + "     , nft.holder_id "
+            + "     , nft.nft_name "
+            + "     , nft.nft_desc "
+            + "     , date_format(nft.cre_datetime_nft, '%Y-%m-%d %H:%i') nft_creation_time "
+            + "     , nft.file_save_url "
+            + "     , ns.seller_id "
+            + "     , ns.sell_price "
+            + "     , ns.app_id "
+            + "     , ui.novaland_account_addr "
+            + "     , case when ns.app_id is null then 'n' else 'y' end is_sell "
+            + "from participating_community pc "
+            + "inner join user_info ui on pc.user_id = ui.user_id "
+            + " inner join nft nft on ui.user_id = nft.holder_id "
+            + " left join nft_sell ns on (nft.nft_id = ns.nft_id and ui.user_id = ns.seller_id) "
+            + "where pc.community_id = " +  req.param("community_id");
+
+    console.log(sql);
+
+    await maria.query(sql, function (err, result) {
+        if (err) {
+            console.log(sql);
+            throw err;
+        } else {
+            console.log(sql);
+            console.log(result);
+            res.send(result);
+        }
+    });
+});
+
 // 특정 커뮤니티의 참여자 리스트를 조회한다.
 router.get('/selectCommunityParticipantList', async function(req,res) {
     // 쿼리문
@@ -149,6 +188,33 @@ router.get('/selectCommunityParticipantList', async function(req,res) {
         }
     });
 });
+
+// 특정 사용자가 특정 커뮤니티에 가입되어있는지 여부를 반환한다.
+router.get('/selectCommunityJoinYn', async function(req,res) {
+    // 쿼리문
+    let sql = "select user_id "
+            + "from participating_community pc "
+            + "where community_id = ? and user_id = ?";
+
+    const datas = [req.query.community_id, req.query.user_id];
+
+    await maria.query(sql, datas,function (err, rows) {
+        if (err) {
+            console.log(err);
+            throw err;
+        } else {
+            if(rows[0] != undefined){
+                const userId = rows[0].user_id;
+                console.log(userId);
+                res.send("true");
+            } else {
+                res.send("false");
+
+            }
+        }
+    });
+});
+
 
 // 사용자가 가입한 커뮤니티 리스트를 조회한다.
 router.get('/selectCommunityListUsingUserId', async function(req,res) {

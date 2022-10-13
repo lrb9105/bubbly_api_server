@@ -13,12 +13,11 @@ function main(req,res) {
     console.log("nft_main 들어옴");
 
   return new Promise(async(resolve)=>{
-    await parseMultiParts(req); 
-    mnemonic = arr[0]; //nft실소유자 주소
-    nftID = arr[1];
-    sellPrice = arr[2];
-    sellerId = arr[3];
-    nftDesc = arr[4];
+    mnemonic = req.body.mnemonic;
+    nftID = req.body.nft_id;
+    sellerId = req.body.seller_id;
+    sellPrice = req.body.sell_price;
+    nftDesc = req.body.nft_desc;
 
     var account = await getAccount(mnemonic);
     let devAddress, devMnemonic, nftOwnerAddress, token_id, nodeToken, ipAddress, port;
@@ -58,17 +57,6 @@ function main(req,res) {
   })
 }
 
-function parseMultiParts(req){
-  return new Promise( (resolve)=>{
-  req.pipe(req.busboy);
-  req.busboy.on('field',(name, value, info) => {
-        console.log(`Field [${name}]: value: %j`, value);
-        arr.push(value);
-    });
-    return resolve();
-})
-}
-
 
 function getAccount(mnemonic){
     console.log(mnemonic);
@@ -88,8 +76,8 @@ function requestSellNFT(devAddress, devMnemonic, nftOwnerAddress, nftID, sellPri
         sell_price: sellPrice,
         token_id: tokenID,
         token: nodeToken,
-        //ip_address: ipAddress+':'+port
-        ip_address: ipAddress
+        ip_address: ipAddress+':'+port
+        //ip_address: ipAddress
     }})  
     .then(function (response) {
         console.log("nft판매요청 성공");

@@ -6,9 +6,7 @@ router.post('/', async function(req,res) {
     var nft_buy = require("../nft-market/nft-buy");
     var resolve = await nft_buy.main(req);
     console.log(resolve.data);
-    //resolve.data결과 아래와 같음.
-    // {result: 'success',
-    //   txn_id: 'QWDR4UUNQ7RIFUP3Z365YFR4ERWE2A3JX73DCQ6KGMBIUAJGDZKQ'}
-    //추가로 RDB에 저장하는 작업 등 수행
-    res.send("success");
+    console.log(resolve);
+
+    res.send(resolve);
 })

@@ -1,27 +1,36 @@
 const { randomFillSync } = require('crypto');
+
 // express.Router를 사용하기 위해 express exports를 가져옴!
 const express = require("express");
+
 // Router를 사용하기 위해 express.Router()호출
 const router = express.Router();
+
 // mariaDB를 연결하기 위해 모듈 가져옴
 const maria = require('../db/maria');
 const time = require('../util/time');
-// s3버킷명
-const BUCKET_NAME = 'bubbly-s3';
+
 // aws-sdk를 사용하기 위해 가져 옴
 const AWS = require('aws-sdk');
+
 // 설정파일
 const config = require('../config/config');
+
 // s3에 접근하기 위해 accessKeyId와 secretAccessKey값을 넣어주고 s3객체를 생성한다.
 const s3 = new AWS.S3({accessKeyId: config.s3_accessKeyId, secretAccessKey: config.s3_secretAccessKey});
+// s3버킷명
+const BUCKET_NAME = config.BUCKET_NAME;
+
 // 외부에서 사용하기 위해 router를 넣어줌!
 module.exports = router;
 
-// 요청 값을 저장하기 위한 해시맵
+// 요청 값을 저장하기 위한 해시맵, hashmap은 여러 함수에서 사용할 것이므로 인스턴스 변수로 생성
 const HashMap  = require ('hashmap') ;
-const { user } = require('../config/config');
-// hashmap은 여러 함수에서 사용할 것이므로 인스턴스 변수로 생성
 let hashmap;
+
+// 채팅관련 sql을 실행할 객체
+const chatSqlExecutor = require("./chatSqlExecutor");
+const ChatSqlExecutor = new chatSqlExecutor();
 
 /* 
     역할: 채팅방을 생성한다.
@@ -54,70 +63,24 @@ router.post('/createChatRoom', async function(req,res) {
     const chatRoomMemberList = chatRoomInfo["chatRoomMemberList"];
     console.log(chatRoomMemberList[0]);
 
-    // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-    let queryStr = 'insert into chat_room (chat_room_name_creator, chat_room_name_other, chat_creator_id, chat_other_id, cre_datetime_chat_room) values (?)';
     let datas = [chatRoomNameCreator, chatRoomNameOther, chatCreatorId, chatOtherId, time.timeToKr()];
     
-    // 저장!
-    await maria.query(queryStr, [datas], async function(err, rows, fields){
-        if(!err){
-            // 채팅방 id를 가져온다.
-            let queryStr2 = 'select max(chat_room_id) chat_room_id from chat_room ';
-            
-            await maria.query(queryStr2, [datas], async function(err, rows, fields){
-                if(!err){
-                    console.log("성공");
-                    // 채팅방 아이디
-                    const chatRoomId = rows[0].chat_room_id;
-                    console.log("생성한 채팅방 아이디: " + chatRoomId);
+    // 데이터베이스에 새로운 채팅방 정보를 저장한다.    
+    const chatRoomId = await ChatSqlExecutor.createChatRoom(datas, chatRoomMemberList, res);
+    
+    // 새로 생성한 채팅방 아이디를 사용자에게전송한다
+    res.send(chatRoomId);
+});
 
-                    // 채팅방 멤버의 정보리스트를 만든다.
-                    const memberSize = chatRoomMemberList.length;
-                    let memberQuery = "";
-                    let timeArr = [];
+router.post('/saveChatFiles', async function(req,res) {
+    // 파라미터 정보를 파싱해서 해시맵에 저장하고 파일을 s3에 저장한다.
+    // 여러개 저장할 경우 ','로 구분해서 이름을 가져온다!
+    // 새로 저장할 파일이 있으면 파일명리스트(,로 구분) 없다면 undefinded
+    let saveFileNames = await parseMultiParts(req);
 
-                    for(let i = 0; i < memberSize; i++){
-                        const userId = chatRoomMemberList[i];
-                        
-                        console.log("userId:" + userId);
-
-                        memberQuery += "(" + userId + ", " + chatRoomId + ", ?),"
-                        timeArr[i] = time.timeToKr();
-                    }
-                    // 마지막 쉼표 제거
-                    memberQuery = memberQuery.substring(0, memberQuery.length - 1);
-                    
-                    console.log("memberQuery: " + memberQuery);
-
-                    // 데이터베이스에 게시물의 텍스트 정보를 저장한다.
-                    let queryStr3 = 'insert into chat_participant (user_id, chat_room_id, cre_datetime_participation) values ' + memberQuery;                    
-                    
-                    // 저장!
-                    await maria.query(queryStr3, timeArr, function(err, rows, fields){
-                        if(!err){
-                            console.log("채팅방 저장 성공");
-                            res.send("" + chatRoomId);
-                        } else {
-                            console.log("실패");
-                            console.log(err);
-                            res.send(err);
-                            return;
-                        }
-                    });
-                } else {
-                    console.log("실패");
-                    console.log(err);
-                    res.send("fail");
-                    return;
-                }
-            });
-        } else {
-            console.log("실패");
-            console.log(err);
-            res.send("fail");
-            return;
-        }
-    });
+    console.log("채팅방 이미지 저장 완료: " + saveFileNames);
+    
+    res.send(saveFileNames);
 });
 
 // 채팅방 프로필 수정
@@ -215,6 +178,49 @@ router.get('/selectChatRoomListUsingUserId', async function(req,res) {
             console.log(sql);
             console.log(result);
             res.send(result);
+        }
+    });
+});
+
+
+// 기존에 존재하는 채팅방인지 여부 조회
+router.get('/selectExistingChatRoomId', async function(req,res) {
+    const chatMember1 = req.query.chatMember1;  
+    const chatMember2 = req.query.chatMember2;
+  
+    const membsers1 =chatMember1 + "," + chatMember2;
+    const membsers2 =chatMember2 + "," + chatMember1;
+  
+    console.log("membsers1: " + membsers1);
+    console.log("membsers2: " + membsers2);
+  
+    // 쿼리문
+    let sql = " select chat_room_id "
+            + " from ( "
+                + " select chat_room_id, GROUP_CONCAT(user_id SEPARATOR ',') AS result  "
+                + "       FROM chat_participant "
+                + "       group by chat_room_id "
+                + "       having count(*) = 2 "
+                + "   ) a "
+            + " where a.result = ? or a.result = ? ";
+  
+    const datas = [membsers1, membsers2];
+  
+    console.log(sql);
+  
+    await maria.query(sql, datas, function (err, rows) {
+        if (err) {
+            console.log(err);
+            throw err;
+        } else {
+            if(rows[0] != undefined){
+                const chatRoomId = rows[0].chat_room_id;
+                console.log(rows);
+                res.send("" + chatRoomId);
+            } else {
+                res.send("null");
+            }
+            
         }
     });
 });
@@ -340,7 +346,7 @@ router.get('/selectChatParticipantUsingChatRoomId', async function(req,res) {
             + " where cp.chat_room_id = " + req.param("chat_room_id");
 
     console.log(sql);
-
+    
     await maria.query(sql, function (err, result) {
         if (err) {
             console.log(sql);
@@ -399,7 +405,7 @@ function parseFormData(req){
     })
   }
 
-    /* multipart 데이터를 파싱하고 정적파일이 있다면 s3로 업로드 한다.
+/* multipart 데이터를 파싱하고 정적파일이 있다면 s3로 업로드 한다.
     input: req
     output: hashMap <= 필드데이터가 key, value로 저장되어있음
 */
